@@ -697,6 +697,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
                     [header1, sql1] = compile(self.operands{1},2);
                     [header2, sql2] = compile(self.operands{2},2);
                     sql = sprintf('%s NATURAL JOIN %s', sql1, sql2);
+
                     header = join(header1,header2);
                     clear header1 header2 sql1 sql2
                     
@@ -864,7 +865,7 @@ function cond = struct2cond(keys, header)
         attr = header.byName(field{1});
         assert(~attr.isBlob, 'The key must not include blob header.')
         if attr.isString
-            assert(ischar(value), ...
+            assert(ischar(value) || isstring(value), ...
                 'Value for key.%s must be a string', field{1})
             value = sprintf('''%s''', escapeString(value));
         elseif attr.isUuid

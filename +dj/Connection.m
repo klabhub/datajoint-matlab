@@ -83,6 +83,12 @@ classdef Connection < handle
                     self.foreignKeys = [self.foreignKeys, s];
                 end
             end
+            % Force unique
+            if isfield(self.foreignKeys,'from') && isfield(self.foreignKeys,'ref')
+            allFk =[cellfun(@string,{self.foreignKeys.from})'  cellfun(@string,{self.foreignKeys.ref})'];
+            [uFk,ix] = unique(allFk,"rows","stable");
+            self.foreignKeys = self.foreignKeys(ix);
+            end
         end
         
         
