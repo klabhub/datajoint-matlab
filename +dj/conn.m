@@ -22,15 +22,6 @@ function connObj = conn(host, user, pass, initQuery, reset, use_tls, nogui)
 
 persistent CONN
 
-if nargin==1 && host==-1 
-    if isa(CONN,'dj.Connection')
-        close(CONN)
-        CONN = [];
-        return;
-    end
-end
-
-
 if nargin < 5 || isempty(reset)
     reset = false;
 end
