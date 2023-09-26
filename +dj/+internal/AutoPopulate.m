@@ -326,13 +326,15 @@ classdef AutoPopulate < dj.internal.UserRelation
                                     % Perform or schedule computation
                                     self.executionEngine(key, @taskCore, {self, key})
                                 catch err
-                                    if ~nargout && ~self.useReservations
-                                        rethrow(err)
-                                    end
                                     % suppress error if it is handled by other means
                                     fprintf('\n** Error while executing %s.makeTuples:\n', class(self))
                                     fprintf('%s: line %d\n', err.stack(1).file, err.stack(1).line)
                                     fprintf('"%s"\n\n',err.message)
+
+                                    if ~nargout && ~self.useReservations
+                                        rethrow(err)
+                                    end
+                               
                                     if nargout
                                         failedKeys = [failedKeys; key]; %#ok<AGROW>
                                         errors = [errors; err];         %#ok<AGROW>
@@ -361,7 +363,7 @@ classdef AutoPopulate < dj.internal.UserRelation
                 jobKey = self.makeJobKey(key);
                 switch status
                     case 'completed'
-                        delQuick(self.jobs & jobKey)
+                        delQuick(self.jobs & jobKey);
                     case 'error'
                         jobKey.status = status;
                         jobKey.error_message = errMsg;
