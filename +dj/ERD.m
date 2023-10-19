@@ -118,12 +118,12 @@ classdef ERD < handle
             
             self.makeGraph
             
-            rege = cellfun(@(s) sprintf('^`[a-zA-z0-9_-]+`\\.`%s[a-z]\\w*`$',s), ...
+            rege = cellfun(@(s) sprintf('^`[a-zA-z0-9_-]+`\\.`[a-zA-Z0-9_]+/%s[a-z]\\w*`$',s), ...
                            dj.Schema.tierPrefixes, 'uni', false);
-            rege{end+1} = '^`[a-zA-z0-9_-]+`\.`\W?\w+__\w+`$';   % for part tables
+            rege{end+1} = '^`[a-zA-z0-9_-]+`\.`[a-zA-Z0-9_]+/\W?\w+__\w+`$';   % for part tables
             rege{end+1} = '^\d+$';  % for numbered nodes
             tiers = cellfun(@(l) find(~cellfun(@isempty, regexp(l, rege)), 1, 'last'), ...
-                            self.graph.Nodes.Name);
+                            self.graph.Nodes.Name,'UniformOutput',true);
             colormap(0.3+0.7*[
                 0.3 0.3 0.3
                 0.0 0.5 0.0

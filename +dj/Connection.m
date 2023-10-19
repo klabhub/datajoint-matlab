@@ -132,11 +132,16 @@ classdef Connection < handle
             % If not strict and the name is not found, then className=tableName
             
             strict = nargin>=3 && strict;
-            s = regexp(fullTableName, '^`(?<dbname>.+)`.`(?<tablename>[#~\w\d]+)`$','names');
+            s = regexp(fullTableName, '^`(?<dbname>.+)`.`(?<schema>\w+)/(?<tablename>[#~\w\d]+)|(?<tablename>[#~\w\d]+)`$','names');            
             className = fullTableName;
-            if ~isempty(s) && self.packages.isKey(s.dbname)
-                className = sprintf('%s.%s',self.packages(s.dbname),dj.internal.toCamelCase(...
-                    s.tablename));
+            if ~isempty(s) 
+                if isfield(s,'schema')
+                    pckg  = s.schema;
+                elseif self.packages.isKey(s.dbname)
+                    pckg = self.packages(s.dbame);
+                end                
+                className = sprintf('%s.%s',pckg,dj.internal.toCamelCase(...
+                    s.tablename));            
             elseif strict
                 error('Unknown package for "%s". Activate its schema first.', fullTableName)
             end
