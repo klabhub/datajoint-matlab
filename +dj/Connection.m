@@ -29,7 +29,8 @@ classdef Connection < handle
             % specify the connection to the database.
             % initQuery is the SQL query to be executed at the start
             % of each new session.
-            dj.setup('prompt', dj.config('safemode'));
+            % BK: disabled setup with GHTB - only need to add a single mym mex 
+            % dj.setup('prompt', dj.config('safemode'));
             self.host = host;
             self.user = username;
             self.password = password;
