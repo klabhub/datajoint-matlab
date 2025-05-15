@@ -112,10 +112,10 @@ classdef (Abstract) DJInstance < handle
 
                 if all(cellfun(@(x) isstruct(x), {tpl.(col_name{:})}))
                     
-                    [varargout{1:nargout}] = [gen.force_mergestruct(tpl.(col_name{:}))];                      
+                    [varargout{1:nargout}] = cat(1,gen.force_mergestruct(tpl.(col_name{:})));                      
                 else
 
-                    [varargout{1:nargout}] = [tpl.(col_name{:})];
+                    [varargout{1:nargout}] = cat(1,tpl.(col_name{:}));
                 end
             else
 
