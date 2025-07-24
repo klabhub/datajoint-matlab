@@ -47,18 +47,68 @@ classdef (Abstract) DJInstance < handle
                 end
 
             else
-                % For all other indexing, use the built-in subsref
-                % This ensures that C1.Property, C1{...}, C1(other_indices), etc.
-                % work as expected.
 
-                % nargoutchk is important to correctly handle cases like:
-                % val = C1.Data; (nargout = 1)
-                % C1.someMethod(); (nargout = 0)
-                if nargout > 0
-                    [varargout{1:nargout}] = builtin('subsref', djTbl, s);
-                else
-                    builtin('subsref', djTbl, s);
+                 % Default handling for dot-indexing like obj.property or obj.method()
+                
+                % Check if this is a method with zero declared outputs
+                isZeroOutputMethod = false;
+                if strcmp(s(1).type, '.')
+                    % Use metaclass to be robust
+                    mc = metaclass(djTbl);
+                    method_meta = mc.MethodList(strcmp({mc.MethodList.Name}, s(1).subs));
+                    if ~isempty(method_meta) && isempty(method_meta.OutputNames)
+                        isZeroOutputMethod = true;
+                    end
                 end
+
+                % --- Corrected Decision Logic ---
+                if isZeroOutputMethod && nargout > 0
+                    % Special Case: Caller wants an output, but the method has none.
+                    
+                    % 1. Call the method, requesting no outputs from it.
+                    builtin('subsref', djTbl, s);
+                    
+                    % 2. Satisfy the caller by creating and assigning empty outputs.
+                    varargout = cell(1, nargout);
+                    [varargout{:}] = deal([]);
+                    
+                else
+                    % Normal Case: It's a property, a method with outputs, or the 
+                    % caller wants no outputs. Let builtin handle it normally.
+                    if nargout > 0
+                        [varargout{1:nargout}] = builtin('subsref', djTbl, s);
+                    else
+                        builtin('subsref', djTbl, s);
+                    end
+                end
+                
+                % % For all other indexing, use the built-in subsref
+                % % This ensures that C1.Property, C1{...}, C1(other_indices), etc.
+                % % work as expected.
+                % 
+                % % nargout is important to correctly handle cases like:
+                % % val = C1.Data; (nargout = 1)
+                % % C1.someMethod(); (nargout = 0)
+                % 
+                % % no of requested outputs
+                % n_declared_op = nargout; %can be 1 even when the function 
+                % % has 0 outputs. We need to check the metaclass for this 
+                % % special case
+                % if strcmp(s(1).type, '.') && ismethod(djTbl, s(1).subs)
+                % 
+                %     % check if asked to return any output                    
+                %     %metaclass
+                %     mc = metaclass(djTbl);
+                %     method_meta = mc.MethodList(strcmp({mc.MethodList.Name}, s(1).subs));
+                %     n_declared_op = numel(method_meta.OutputNames);
+                % 
+                % end
+                % 
+                % if n_declared_op > 0
+                %     [varargout{1:nargout}] = builtin('subsref', djTbl, s);
+                % else
+                %     builtin('subsref', djTbl, s);
+                % end
             end
         end
 

@@ -286,7 +286,7 @@ classdef AutoPopulate < dj.internal.UserRelation
             % create tables of all parts in a master-part relationship to
             % avoid implicit commits.
             for part = self.getParts
-                part{1}.create
+                part{1}.create;
             end
             
             popRestricts = varargin;  % restrictions on key source
