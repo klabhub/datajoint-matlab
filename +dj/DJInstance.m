@@ -1,8 +1,6 @@
 classdef (Abstract) DJInstance < handle
-
     % A utility wrapper class for Datajoint table instances to use indexing
-
-    methods
+    methods (Access = public)
 
         function varargout = subsref(djTbl, s)
             % obj: The object instance (e.g., C1)

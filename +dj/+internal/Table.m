@@ -16,38 +16,55 @@
 % The syntax of the table definition can be found at
 % https://github.com/datajoint/datajoint-matlab/wiki/Table-declaration
 
-classdef Table < handle
-    
-    properties(SetAccess = protected)
-        className    % the name of the corresponding base dj.Relvar class
-        schema          % handle to a schema object
+classdef Table < dj.DJInstance
+
+    properties(SetAccess = private)
+        className               % the name of the corresponding base dj.Relvar class        
+        schema                  % handle to a schema object
+        dbName (1,:) {char} ='' % Database name; if empty it is determined from package.getSchema
     end
-    
+
     properties(SetAccess = private)
         plainTableName  % just the table name
         tableHeader     % attribute information
     end
-    
+
     properties(Dependent, SetAccess = private)
         info           % table information
         fullTableName  % `database`.`plain_table_name`
         ancestors      % names of all referenced tables, including self, recursively,
-                       % in order of dependencies
+        % in order of dependencies
         descendants    % names of all dependent tables, including self, recursively,
-                       % in order of dependencies
+        % in order of dependencies
     end
-    
-    
+
+
     methods
-        function self = Table(className)
+        function self = Table(varargin)
             % dj.Table with no arguments is used when dj.Table is inherited by dj.Relvar
             % dj.Table('package.ClassName')  -  initialize with class name.
-            if nargin>=1
-                self.className = className;
+            varargin = cellfun(@char,varargin,'UniformOutput',false); % Force to char
+            switch (nargin)
+                case 0
+                case 1
+                if contains(varargin{1},'.') 
+                    % This is is package.Classname - original DJ usage of the
+                    % Table constructor
+                    self.className = varargin{1};
+                else
+                    % This is  the name of a datbase. NS usage
+                    self.dbName =varargin{1};
+                end
+                case 2                
+                    self.className = varargin{1};
+                    self.dbName  = varargin{2};
+                otherwise
+                    error('table takes between 0 and 2 inputs')
             end
+
         end
-        
-        
+
+
         function name = get.className(self)
             name = self.className;
             if isempty(name)
@@ -61,8 +78,8 @@ classdef Table < handle
                 end
             end
         end
-        
-        
+
+
         function set.className(self, className)
             self.className = className;
             assert(ischar(self.className) && ~isempty(self.className),  ...
@@ -71,24 +88,27 @@ classdef Table < handle
                 'invalid table identification ''%s''. Should be package.ClassName', ...
                 self.className)
         end
-        
-        
+
+
         function info = get.info(self)
             info = self.schema.headers(self.plainTableName).info;
         end
-        
-        
+
+
         function hdrObj = get.tableHeader(self)
             if isempty(self.tableHeader)
                 self.tableHeader = self.schema.headers(self.plainTableName);
             end
             hdrObj = self.tableHeader;
         end
-        
-        
+
+
         function ret = get.schema(self)
             if isempty(self.schema)
                 assert(~isempty(self.className), 'className not set')
+                if isempty(self.dbName)
+                    % Original DJ - single database, defined in
+                    % package.getSchema
                 parts = strsplit(self.className, '.');
                 for i=1:length(parts)-1
                     schemaFunction = strjoin([parts(1:i) {'getSchema'}], '.');
@@ -101,16 +121,30 @@ classdef Table < handle
                 self.schema = feval(schemaFunction);
                 assert(isa(self.schema, 'dj.Schema'), ...
                     [schemaFunction ' must return an instance of dj.Schema'])
+                else
+                    % NSDJ addition; define a database not hard coded in the
+                    % the package.getSchema file. This value is set in the
+                    % constructor of dj.internal.Table (user defined
+                    % classes deriving from this define an appropriate
+                    % constructor ; see for example ns.Subject)
+                    package =extractBefore(self.className,'.');
+                    % Use the convention that each package is mapped to
+                    % db/package (with nested namespaces this may not work)
+                    self.schema = dj.Schema(dj.conn,package,[self.dbName  '/'  package]);
+                    assert(isa(self.schema, 'dj.Schema'), sprintf('Failed creating schema in database %s ',self.dbName))
+                
+                end
+
             end
             ret = self.schema;
         end
-        
-        
+
+
         function name = get.fullTableName(self)
             name = sprintf('`%s`.`%s`', self.schema.dbname, self.plainTableName);
         end
-        
-        
+
+
         function name = get.plainTableName(self)
             if isempty(self.plainTableName)
                 self.create
@@ -118,20 +152,20 @@ classdef Table < handle
             end
             name = self.plainTableName;
         end
-        
-        
+
+
         function list = parents(self, varargin)
             self.schema.reload(false)
             list = self.schema.conn.parents(self.fullTableName, varargin{:});
         end
-        
-        
+
+
         function list = children(self, varargin)
             self.schema.reload(false)
             list = self.schema.conn.children(self.fullTableName, varargin{:});
         end
-        
-        
+
+
         function list = get.ancestors(self)
             map = containers.Map('KeyType','char','ValueType','uint16');
             recurse(self,0)
@@ -139,7 +173,7 @@ classdef Table < handle
             [~,order] = sort([levels{:}],'descend');
             list = map.keys;
             list = list(order);
-            
+
             function recurse(table,level)
                 if ~map.isKey(table.className) || level>map(table.className)
                     cellfun(@(name) recurse(dj.Table(self.schema.conn.tableToClass(name)), ...
@@ -148,8 +182,8 @@ classdef Table < handle
                 end
             end
         end
-        
-        
+
+
         function list = get.descendants(self)
             map = containers.Map('KeyType','char','ValueType','uint16');
             recurse(self,0)
@@ -157,7 +191,7 @@ classdef Table < handle
             [~,order] = sort([levels{:}]);
             list = map.keys;
             list = list(order);
-            
+
             function recurse(table,level)
                 if ~map.isKey(table.className) || level>map(table.className)
                     cellfun(@(name) recurse(dj.internal.Table( ...
@@ -166,8 +200,8 @@ classdef Table < handle
                 end
             end
         end
-        
-        
+
+
         function ret = sizeOnDisk(self)
             % return the table's size on disk in Mebibytes
             s = self.schema.conn.query(...
@@ -180,9 +214,9 @@ classdef Table < handle
                 fprintf('Size on disk %u MB\n', ceil(tableSize))
             end
         end
-        
-        
-        
+
+
+
         function erd(self, up, down)
             % dj.Table/erd - plot the entity relationship diagram of tables
             % that are connected to self.
@@ -192,7 +226,7 @@ classdef Table < handle
             %   table.erd  -- equivalent to table.erd(2,2)
             %
             % See also dj.Schema/erd
-            
+
             self.create
             if nargin<=2
                 down = dj.config('displayDiagram_hierarchy_radius');
@@ -202,7 +236,7 @@ classdef Table < handle
                 up = dj.config('displayDiagram_hierarchy_radius');
                 up = up(1);
             end
-            
+
             d = dj.ERD(self);
             n = length(d.nodes);
             while down>0 || up>0
@@ -221,16 +255,16 @@ classdef Table < handle
             end
             d.draw
         end
-        
-        
+
+
         function str = re(self)
             % alias for self.describe
             warning(['dj.Table/re is deprecated and will be removed in future releases: ' ...
                 'Use dj.Table/describe instead']);
             str = self.describe;
         end
-        
-        
+
+
         function str = describe(self)
             % dj.Table/re - "reverse engineer" the table defintion.
             %
@@ -239,19 +273,19 @@ classdef Table < handle
             %
             % str will contain the table definition string that can be used
             % to create the table using dj.Table.
-            
+
             % table header
             str = sprintf('%%{\n# %s', self.info.comment);
             assert(any(strcmp(self.schema.classNames, self.className)), ...
                 'class %s does not appear in the class list of the schema', self.className);
-            
+
             % get foreign keys
             fk = self.schema.conn.foreignKeys;
             if ~isempty(fk)
                 fk = fk(arrayfun(@(s) strcmp(s.from, self.fullTableName) && ...
                     ~contains(s.ref, '~external'), fk));
             end
-            
+
             attributes_thus_far = {};
             inKey = true;
             for attr = self.tableHeader.attributes'
@@ -270,7 +304,7 @@ classdef Table < handle
                     else
                         ref_attr = setdiff(fk(i).attrs, fk(i).ref_attrs);
                         str = sprintf('%s\n (%s) -> %s', str, strjoin(ref_attr, ', '), ...
-                                      self.schema.conn.tableToClass(fk(i).ref));
+                            self.schema.conn.tableToClass(fk(i).ref));
                     end
                 end
                 fk(resolved) = [];
@@ -298,8 +332,8 @@ classdef Table < handle
             end
             str = sprintf('%s\n%%}\n', str);
         end
-        
-        
+
+
         function optimize(self)
             % optimizes the table if it has become fragmented after repeated inserts and
             % deletes.
@@ -309,15 +343,15 @@ classdef Table < handle
                 sprintf('OPTIMIZE LOCAL TABLE %s', self.fullTableName));
             disp(status.Msg_text{end})
         end
-        
-        
+
+
         %%%%% ALTER METHODS: change table definitions %%%%%%%%%%%%
         function setTableComment(self, newComment)
             % dj.Table/setTableComment - update the table comment
             % in the table definition
             self.alter(sprintf('COMMENT="%s"', newComment));
         end
-        
+
         function addAttribute(self, definition, after)
             % dj.Table/addAttribute - add a new attribute to the
             % table. A full line from the table definition is
@@ -333,18 +367,18 @@ classdef Table < handle
                 assert(strcmpi(after,'FIRST') || strncmpi(after,'AFTER',5))
                 after = [' ' after];
             end
-            
+
             [sql, ~, ~] = dj.internal.Declare.compileAttribute(...
                 dj.internal.Declare.parseAttrDef(definition), []);
             self.alter(sprintf('ADD COLUMN %s%s', sql, after));
         end
-        
+
         function dropAttribute(self, attrName)
             % dj.Table/dropAttribute - drop the attribute attrName
             % from the table definition
             self.alter(sprintf('DROP COLUMN `%s`', attrName));
         end
-        
+
         function alterAttribute(self, attrName, newDefinition)
             % dj.Table/alterAttribute - Modify the definition of attribute
             % attrName using its new line from the table definition
@@ -353,7 +387,7 @@ classdef Table < handle
                 dj.internal.Declare.parseAttrDef(newDefinition), []);
             self.alter(sprintf('CHANGE COLUMN `%s` %s', attrName, sql));
         end
-        
+
         function addForeignKey(self, target)
             % add a foreign key constraint.
             % The target must be a dj.Table object or a string with the
@@ -363,7 +397,7 @@ classdef Table < handle
             %
             % EXAMPLE:
             %    tp.Align.table.addForeignKey(common.Scan)
-            
+
             if isa(target, 'dj.Table')
                 target = sprintf('->%s', target.className);
             end
@@ -371,11 +405,11 @@ classdef Table < handle
                 self.primaryKey, true, dj.internal.shorthash(self.fullTableName));
             self.alter(sprintf('ADD %s%s', attr_sql, fk_sql))
         end
-        
+
         function dropForeignKey(self, target)
             % drop a foreign key constraint.
             % The target must be a dj.Relvar object.
-            
+
             % get constraint name
             sql = sprintf( ...
                 ['SELECT distinct constraint_name AS name ' ...
@@ -392,7 +426,7 @@ classdef Table < handle
                 self.alter(sprintf('DROP FOREIGN KEY `%s`', name.name{1}));
             end
         end
-        
+
         function addIndex(self, isUniqueIndex, indexAttributes)
             % dj.Table/addIndex - add a new secondary index to the
             % table.
@@ -428,7 +462,7 @@ classdef Table < handle
             end
             self.alter(sprintf('ADD %sINDEX (%s)', modifier, fieldList(1:end-1)));
         end
-        
+
         function dropIndex(self, indexAttributes)
             % dj.Table/dropIndex - Drops a secondary index from the
             % table.
@@ -438,7 +472,7 @@ classdef Table < handle
             if ischar(indexAttributes)
                 indexAttributes = {indexAttributes};
             end
-            
+
             % Don't touch indexes introduced by foreign keys
             implicitIndexes = self.getImplicitIndexes;
             assert(~any(arrayfun( ...
@@ -447,7 +481,7 @@ classdef Table < handle
                 ['The specified set of attributes is indexed ' ...
                 'because of a foreign key constraint. This index ' ...
                 'cannot be dropped.']);
-            
+
             % Drop specified index(es). There should only be one unless
             % they were redundantly created outside of DataJoint.
             allIndexes = self.getIndexes;
@@ -460,7 +494,7 @@ classdef Table < handle
                 error('Could not locate specified index in database.')
             end
         end
-        
+
         function syncDef(self)
             % dj.Table/syncDef replace the table definition in the file
             % <package>.<className>.m with the actual definition from the database.
@@ -468,7 +502,7 @@ classdef Table < handle
             % This method is useful if the table definition has been
             % changed by other means than the regular datajoint definition
             % process.
-            
+
             % escape backslashes in pathname for proper display - only
             % relevant on Windows
             path = strrep(which(self.className), '\', '\\');
@@ -489,7 +523,7 @@ classdef Table < handle
                         line = fgetl(f);
                     end
                     fclose(f);
-                    
+
                     % write new file
                     f = fopen(path, 'wt');
                     p1 = find(strcmp(strtrim(lines), '%{'), 1, 'first');
@@ -520,7 +554,7 @@ classdef Table < handle
                 end
             end
         end
-        
+
         function list = getEnumValues(self, attr)
             % returns the list of allowed values for the attribute attr of type enum
             ix = strcmpi(attr, self.tableHeader.names);
@@ -531,11 +565,11 @@ classdef Table < handle
             list = regexp(list.list,'''(?<item>[^'']+)''','names');
             list = {list.item};
         end
-        
+
         %%%%%  END ALTER METHODS
-        
-        
-        
+
+
+
         function drop(self)
             % dj.Table/drop - drop the table and all its dependents.
             % Confirmation is requested if the dropped tables contain data.
@@ -546,7 +580,7 @@ classdef Table < handle
             % table.
             %
             % See also dj.Table, dj.BaseRelvar/del
-            
+
             if ~self.isCreated
                 disp 'Nothing to drop'
             else
@@ -560,7 +594,7 @@ classdef Table < handle
                     fprintf('%20s (%s,%5d tuples)\n', table.fullTableName, table.info.tier, n)
                     doPrompt = doPrompt || n;   % prompt if not empty
                 end
-                
+
                 % if any table has data, give option to cancel
                 doPrompt = doPrompt && dj.config('safemode');  % suppress prompt
                 if doPrompt && ~strcmpi('yes', dj.internal.ask('Proceed to drop?'))
@@ -583,9 +617,9 @@ classdef Table < handle
             end
         end
     end
-    
+
     methods(Access=private)
-        
+
         function alter(self, alterStatement)
             % dj.Table/alter
             % alter(self, alterStatement)
@@ -599,16 +633,16 @@ classdef Table < handle
             self.tableHeader = [];          % Force update of cached header
             self.syncDef
         end
-        
+
     end
-    
-    
+
+
     methods
-        
+
         function yes = isCreated(self)
             yes = self.schema.tableNames.isKey(self.className);
         end
-        
+
         function create(self)
             % parses the table declration and declares the table
 
@@ -631,8 +665,8 @@ classdef Table < handle
             self.schema.reload
         end
     end
-    
-    
+
+
     methods
         function indexInfo = getIndexes(self)
             % dj.Table/getIndexes

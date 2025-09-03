@@ -6,8 +6,9 @@ classdef Master < handle
         function list = getParts(self)
             % find classnames that begin with me and are dj.Part
             info = meta.class.fromName(class(self));
-            classNames = {info.ContainingPackage.ClassList.Name};
-            list = cellfun(@feval, classNames(dj.lib.startsWith(classNames, class(self))), 'uni', false);
+            classNames = {info.ContainingPackage.ClassList.Name};  
+            match = ~cellfun(@isempty,regexp(classNames,['\<' class(self) '[A-Z]+'],"start"));            
+            list = cellfun(@(x)feval(x,self.dbName),classNames(match) , 'uni', false);
             list = list(cellfun(@(x) isa(x, 'dj.Part'), list));
         end
     end
