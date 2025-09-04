@@ -21,7 +21,7 @@ classdef Table < dj.DJInstance
     properties(SetAccess = private)
         className               % the name of the corresponding base dj.Relvar class        
         schema                  % handle to a schema object
-        dbName (1,:) {char} ='' % Database name; if empty it is determined from package.getSchema
+        dbName (1,:) {char} ='' % Database name; specified on construction or defaulted to the value in getSchema
     end
 
     properties(SetAccess = private)
@@ -46,6 +46,7 @@ classdef Table < dj.DJInstance
             varargin = cellfun(@char,varargin,'UniformOutput',false); % Force to char
             switch (nargin)
                 case 0
+                   self.dbName = self.schema.dbname;
                 case 1
                 if contains(varargin{1},'.') 
                     % This is is package.Classname - original DJ usage of the
@@ -154,9 +155,22 @@ classdef Table < dj.DJInstance
         end
 
 
-        function list = parents(self, varargin)
-            self.schema.reload(false)
-            list = self.schema.conn.parents(self.fullTableName, varargin{:});
+        function list = parents(self,primary,pv)
+            arguments
+                self (1,1) dj.internal.Table
+                primary (1,1) logical = false
+                pv.dbName (1,1) string = ""
+            end
+            self.schema.reload(false)            
+            list = self.schema.conn.parents(self.fullTableName,primary);
+            if pv.dbName ==""
+                % Parents are in the same database as self               
+            else
+                % Parents are in a different database - construct their
+                % names here.
+                list  = cellfun(@(x) strrep(x,self.dbName,pv.dbName),list)
+              
+            end
         end
 
 

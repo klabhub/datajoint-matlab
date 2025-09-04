@@ -69,7 +69,10 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             % Only non-blob attributes of the first several tuples are shown.
             % The total number of tuples is printed at the end.
             tic
-            fprintf('\nObject %s\n\n',class(self))
+            % Show the originating sql
+            tmpSql = self.sql;
+            tmpSql = tmpSql(1:min(80,numel(tmpSql)));            
+            fprintf('\nObject %s("%s")\n\n',class(self),tmpSql)
             hdr = self.header;
             % tableHeader exists in tables but not in derived relations.
             if isprop(self, 'tableHeader')

@@ -94,13 +94,18 @@ classdef Connection < handle
 
 
         function [names, isprimary] = parents(self, child, primary)
+            arguments
+                self (1,1)  dj.Connection
+                child (1,:) {mustBeText}
+                primary (1,1) logical = false
+            end
             if isempty(self.foreignKeys)
                 names = {};
                 isprimary = [];
             else
                 ix = strcmp(child, {self.foreignKeys.from});
-                if nargin>2
-                    ix = ix & primary == [self.foreignKeys.primary];
+                if primary
+                    ix = ix & logical([self.foreignKeys.primary]);
                 end
                 names = {self.foreignKeys(ix).ref};
                 if nargout > 1

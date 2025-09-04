@@ -54,23 +54,48 @@ classdef AutoPopulate < dj.internal.UserRelation
     methods
         
         
-        function source = getKeySource(self)
+        function source = getKeySource(self,pv)
             % construct key source for auto-population of imported and
             % computed tables.
             % By default the key source is the join of the primary parents.
             % Users can customize the key source by defining the optional
             % keySource property.
-            
+            arguments
+                self (1,1) dj.internal.AutoPopulate
+                pv.dbName (1,1) string  = ""
+            end
             if ~isempty(self.keySource_)
+                % Previously computed; return the cached soruce
                 source = self.keySource_;
             else
                 if isprop(self, 'popRel')
-                    source = self.popRel;
+                    source = self.popRel; % Never set/used except here...?
                 elseif isprop(self, 'keySource')
-                    source = self.keySource;
+                    % Call the user defined get.keySource
+                    meta = metaclass(self);
+                    multiKeySourceMethod = meta.MethodList(strcmp({meta.MethodList.Name},'multiKeySource'));
+                    if isempty(multiKeySourceMethod)
+                        % User has not defined the multiKeySourceMethod.
+                        if pv.dbName ==""
+                            % OK: keySource should come from the default schema
+                            % defined in the namespace.getSchema
+                            % functions. Simply call the keySource 
+                            source = self.keySource();
+                        else
+                            % NOK: user class must implement the
+                            % multiKeySource function
+                            fprintf(1,'User class (%s) must implement the multiKeySource function to populate from non-default databases:\n',meta.Name);
+                            fprintf(1,'function v = multiKeySource(o,pv) \n   arguments o (1,1) %s\n   pv.dbName (1,1) string = ""\n   end\n ... your code goes here... end\n',meta.Name);
+                            error('datajoint:multiKeySource','Missing multiKeySource')
+                        end
+                    else
+                        % User defined class has defined how to switch
+                        % databases; use that function, pass the dbName
+                        source = self.multiKeySource(dbName = pv.dbName);
+                    end                   
                 else
                     % the default key source is the join of the parents
-                    parents = self.parents(true);
+                    parents = self.parents(true,dbName=pv.dbName);
                     assert(~isempty(parents), ...
                         'AutoPopulate table %s must have primary dependencies or an explicit keySource property', class(self))
                     r = @(ix) dj.Relvar(self.schema.conn.tableToClass(parents{ix}));
@@ -84,7 +109,7 @@ classdef AutoPopulate < dj.internal.UserRelation
         end
         
         
-        function varargout = populate(self, varargin)
+        function varargout = populate(self,varargin)
             % [failedKeys, errors] = populate(baseRelvar [, restrictors...])
             % populates a table based on the contents self.getKeySource
             %
@@ -110,7 +135,19 @@ classdef AutoPopulate < dj.internal.UserRelation
             %   [failedKeys, errs] = populate(tp.OriMaps);  % skip errors and return their list
             %
             % See also dj.internal.AutoPopulate/parpopulate
-            
+                        
+            % Check for a dbName = "xxx" parameter-value pair 
+            isDbParameter = (cellfun(@(x) (isstring(x) || ischar(x)) && strcmp(x,"dbName"),varargin));
+            if any(isDbParameter)
+                ix = find(isDbParameter);
+                dbName = string(varargin{ix+1});                    
+                restrictions = varargin;
+                restrictions([ix ix+1]) =[];
+            else
+                dbName = "";
+                restrictions = varargin;
+            end
+
             if ~dj.config('queryPopulate_ancestors')
                 rels = {self};
             else
@@ -125,9 +162,9 @@ classdef AutoPopulate < dj.internal.UserRelation
             
             for i=1:length(rels)
                 rels{i}.useReservations = false;
-                rels{i}.populateSanityChecks
+                rels{i}.populateSanityChecks(dbName = dbName)
                 rels{i}.executionEngine = @(key, fun, args) fun(args{:});
-                [varargout{1:nargout}] = rels{i}.populate_(varargin{:});
+                [varargout{1:nargout}] = rels{i}.populate_(restrictions{:},dbName= dbName);
             end
         end
         
@@ -173,6 +210,19 @@ classdef AutoPopulate < dj.internal.UserRelation
             %
             % See also dj.internal.AutoPopulate/populate
             
+            % Check for a dbName = "xxx" parameter-value pair 
+            isDbParameter = (cellfun(@(x) (isstring(x) || ischar(x)) && strcmp(x,"dbName"),varargin));
+            if any(isDbParameter)
+                dbName = "";
+                restrictions = varargin;
+            else
+                ix = find(isDbParameter);
+                dbName = string(varargin{ix+1});                    
+                restrictions = varargin;
+                restrictions([ix ix+1]) =[];
+            end
+
+
             if ~dj.config('queryPopulate_ancestors')
                 rels = {self};
             else
@@ -185,7 +235,7 @@ classdef AutoPopulate < dj.internal.UserRelation
             
             for i=1:length(rels)
                 rels{i}.useReservations = true;
-                rels{i}.populateSanityChecks
+                rels{i}.populateSanityChecks(dbName =dbName)
                 rels{i}.executionEngine = @(key, fun, args) fun(args{:});
                 rels{i}.populate_(varargin{:});
             end
@@ -438,12 +488,17 @@ classdef AutoPopulate < dj.internal.UserRelation
         end
         
         
-        function populateSanityChecks(self)
+        function populateSanityChecks(self,pv)
             % Performs sanity checks that are common to populate,
             % parpopulate and batch_populate.
             % To disable the sanity check: dj.config('queryPopulate_check',false)
+            arguments
+                self (1,1) dj.internal.AutoPopulate
+                pv.dbName (1,1) = ""
+            end
+
             if dj.config('queryPopulate_check')
-                source = self.getKeySource;
+                source = self.getKeySource(dbName=pv.dbName);
                 abovePopRel = setdiff(self.primaryKey(1:min(end,length(source.primaryKey))), source.primaryKey);
                 if ~all(ismember(source.primaryKey, self.primaryKey))
                     warning(['The keySource primary key contains extra fields. ' ...
