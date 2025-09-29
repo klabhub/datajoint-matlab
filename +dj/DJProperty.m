@@ -1,11 +1,16 @@
 classdef DJProperty < handle
     %% Property caller for datajoint instances
     %
+    properties
+        
+        value
+
+    end
     properties (Access = protected)
                
-        parent dj.DJInstance% parent datajoint class
-        identity_vars_
-        value = []
+        parent % parent datajoint class
+        identity_vars_        
+        getMethod function_handle %method to call property
 
     end
 
@@ -18,23 +23,21 @@ classdef DJProperty < handle
         
     end
 
-    methods (Abstract, Access = protected)
-
-        get_method(self, key) %method to call property
-        
-    end
-
     methods
 
-        function self = DJProperty(parent, prop_name, pv)
+        function self = DJProperty(parent, pub_prop_name, pv)
+
+            % DJProperty often fetches info on-demand from instances. It
+            % can be initiated as an empty instance. 
 
             arguments
                 
                 parent dj.DJInstance
-                prop_name {mustBeText}
-
+                pub_prop_name {mustBeText} % Name of the public dependent property to listen to;
+                pv.getMethodHandle function_handle = get_method_handle(parent, pub_prop_name) 
                 % Use the following options when the property has different
-                % 
+                % identity variables than the primary keys of the parent
+                % table
                 pv.add_identity_var (1,:) cell = {}
                 pv.remove_identity_var (1,:) cell = {}
                 pv.set_identity_var (1,:) cell = {}
@@ -42,8 +45,9 @@ classdef DJProperty < handle
             end
 
             self.parent = parent;
+            self.getMethod = pv.getMethodHandle;
 
-            if ~isempty(pv.set_identity_var)
+            if isempty(pv.set_identity_var)
 
                 self.identity_vars = self.parent.primaryKey;
             
@@ -64,12 +68,16 @@ classdef DJProperty < handle
                 self.identity_vars = setdiff(self.identity_vars, pv.remove_identity_var);
                 
             end
-            addlistener(parent, prop_name, 'PreGet', self.make());
+            try
+             addlistener(parent, pub_prop_name, 'PreGet', @self.demand);
+            catch e
+                e
+            end
 
 
         end
 
-        function self = make(self)
+        function self = demand(self, ~, ~)
             
             % method to call properties per row
             % get_method must have been defined within the instance class
@@ -92,10 +100,16 @@ classdef DJProperty < handle
             end
 
             op.value = gen.make_column(props);
-            if height(op) == 1 || isequal(props{:})
+            if height(op) == 1% || isequal(props{:})
                 op = op.value{1};
             end
             self.value = op;
+
+        end
+
+        function value = get_method(self, key)
+
+            value = self.getMethod(key);
 
         end
         
@@ -122,20 +136,18 @@ classdef DJProperty < handle
 
             parent = self.parent;
 
-        end
-
-        function self = update(self, new_parent)
-
-            if isempty(self) || ~isequal(self.parent, new_parent)
-
-                self.parent = new_parent;
-                self.make();
-                
-            end
-        end
-
-        
+        end       
 
     end
+
+end
+
+function func = get_method_handle(parent, pub_prop_name)
+
+func_str = regexprep(pub_prop_name,{'^.','_(\w)'},{'get${upper($0)}','${upper($1)}'});
+mc = meta.class.fromName(class(parent));
+method_list = mc.MethodList;
+method = method_list(strcmp({method_list.Name}, func_str));
+func = @(varargin) parent.(method.Name)(varargin{:});
 
 end

@@ -4,6 +4,13 @@ classdef (Abstract) DJInstance < handle
 
     methods
 
+        function self = DJInstance(varargin)
+
+            % Only initiates the DJProperty instances
+            self.initiate_dj_properties_();
+
+        end
+
         function varargout = subsref(djTbl, s)
             % obj: The object instance (e.g., C1)
             % s: A structure array with fields:
@@ -118,6 +125,44 @@ classdef (Abstract) DJInstance < handle
 
         end
         
+
+    end
+
+    methods (Access = protected)
+
+        function initiate_dj_properties_(self)
+
+            % First list the DJProperty properties within the class
+            prot_name = list_dj_properties_(self);
+
+            % DJProperty's are protected within class and named as 
+            % prop_name_ whereas the associated public dependent properties
+            % would not have the final '_' in their names. DJProperty adds
+            % a listener to the associated public dependent property
+
+            pub_name = cellfun(@(s) regexprep(s,"_$",""), prot_name, UniformOutput=false);
+
+            for pub_nameN = pub_name
+
+                self.(pub_nameN{:}) = dj.DJProperty(self, pub_nameN{:});
+
+            end
+
+        end
+
+        function prop_names = list_dj_properties_(self)
+
+            meta_class = meta.class.fromName(class(self));
+            % Filter the list to find the properties
+            isDJProp = arrayfun(@(p) ...
+                ~isempty(p.Validation) && ... % Does it have validation?
+                ~isempty(p.Validation.Class) && ... % Is the validation a class?
+                strcmp(p.Validation.Class.Name, 'dj.DJProperty'), ... % Does the name match?
+                meta_class.PropertyList);
+            prop_names = {meta_class.PropertyList(isDJProp).Name};
+
+        end
+
 
     end
 
