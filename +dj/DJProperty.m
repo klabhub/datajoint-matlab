@@ -3,14 +3,15 @@ classdef DJProperty < handle
     %
     properties
         
-        value
+        parent % parent datajoint class
+        value = []
 
     end
     properties (Access = protected)
                
-        parent % parent datajoint class
+        
         identity_vars_        
-        getMethod function_handle %method to call property
+        getMethod %method name to call property
 
     end
 
@@ -25,7 +26,7 @@ classdef DJProperty < handle
 
     methods
 
-        function self = DJProperty(parent, pub_prop_name, pv)
+        function self = DJProperty(parent, getMethod, pv)
 
             % DJProperty often fetches info on-demand from instances. It
             % can be initiated as an empty instance. 
@@ -33,8 +34,7 @@ classdef DJProperty < handle
             arguments
                 
                 parent dj.DJInstance
-                pub_prop_name {mustBeText} % Name of the public dependent property to listen to;
-                pv.getMethodHandle function_handle = get_method_handle(parent, pub_prop_name) 
+                getMethod function_handle
                 % Use the following options when the property has different
                 % identity variables than the primary keys of the parent
                 % table
@@ -45,7 +45,7 @@ classdef DJProperty < handle
             end
 
             self.parent = parent;
-            self.getMethod = pv.getMethodHandle;
+            self.getMethod = getMethod;
 
             if isempty(pv.set_identity_var)
 
@@ -68,20 +68,14 @@ classdef DJProperty < handle
                 self.identity_vars = setdiff(self.identity_vars, pv.remove_identity_var);
                 
             end
-            try
-             addlistener(parent, pub_prop_name, 'PreGet', @self.demand);
-            catch e
-                e
-            end
-
-
+                       
+            
         end
 
-        function self = demand(self, ~, ~)
+        function self = demand(self)
             
             % method to call properties per row
             % get_method must have been defined within the instance class
-            if ~isempty(self.value), return; end
 
             tbl = self.parent;
             tpls = fetchtable(self.parent,self.identity_vars{:});
@@ -136,18 +130,14 @@ classdef DJProperty < handle
 
             parent = self.parent;
 
-        end       
+        end 
+
+        function i = isempty(self)
+
+            i = builtin('isempty',self) || isempty(self.value);
+
+        end
 
     end
-
-end
-
-function func = get_method_handle(parent, pub_prop_name)
-
-func_str = regexprep(pub_prop_name,{'^.','_(\w)'},{'get${upper($0)}','${upper($1)}'});
-mc = meta.class.fromName(class(parent));
-method_list = mc.MethodList;
-method = method_list(strcmp({method_list.Name}, func_str));
-func = @(varargin) parent.(method.Name)(varargin{:});
 
 end

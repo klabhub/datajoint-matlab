@@ -4,13 +4,6 @@ classdef (Abstract) DJInstance < handle
 
     methods
 
-        function self = DJInstance(varargin)
-
-            % Only initiates the DJProperty instances
-            self.initiate_dj_properties_();
-
-        end
-
         function varargout = subsref(djTbl, s)
             % obj: The object instance (e.g., C1)
             % s: A structure array with fields:
@@ -82,40 +75,9 @@ classdef (Abstract) DJInstance < handle
                 else
                     % Normal Case: It's a property, a method with outputs, or the 
                     % caller wants no outputs. Let builtin handle it normally.
-                    if nargout > 0
-                        [varargout{1:nargout}] = builtin('subsref', djTbl, s);
-                    else
-                        builtin('subsref', djTbl, s);
-                    end
+                    [varargout{1:nargout}] = builtin('subsref', djTbl, s);
                 end
-                
-                % % For all other indexing, use the built-in subsref
-                % % This ensures that C1.Property, C1{...}, C1(other_indices), etc.
-                % % work as expected.
-                % 
-                % % nargout is important to correctly handle cases like:
-                % % val = C1.Data; (nargout = 1)
-                % % C1.someMethod(); (nargout = 0)
-                % 
-                % % no of requested outputs
-                % n_declared_op = nargout; %can be 1 even when the function 
-                % % has 0 outputs. We need to check the metaclass for this 
-                % % special case
-                % if strcmp(s(1).type, '.') && ismethod(djTbl, s(1).subs)
-                % 
-                %     % check if asked to return any output                    
-                %     %metaclass
-                %     mc = metaclass(djTbl);
-                %     method_meta = mc.MethodList(strcmp({mc.MethodList.Name}, s(1).subs));
-                %     n_declared_op = numel(method_meta.OutputNames);
-                % 
-                % end
-                % 
-                % if n_declared_op > 0
-                %     [varargout{1:nargout}] = builtin('subsref', djTbl, s);
-                % else
-                %     builtin('subsref', djTbl, s);
-                % end
+                               
             end
         end
 
@@ -124,47 +86,34 @@ classdef (Abstract) DJInstance < handle
             n = numel(djTbl);
 
         end
-        
 
-    end
+        function val = get_dj_property(djTbl, djProp, getMethod, varargin)
 
-    methods (Access = protected)
+            % Wrapper function to call djProperty values 
+            arguments
 
-        function initiate_dj_properties_(self)
-
-            % First list the DJProperty properties within the class
-            prot_name = list_dj_properties_(self);
-
-            % DJProperty's are protected within class and named as 
-            % prop_name_ whereas the associated public dependent properties
-            % would not have the final '_' in their names. DJProperty adds
-            % a listener to the associated public dependent property
-
-            pub_name = cellfun(@(s) regexprep(s,"_$",""), prot_name, UniformOutput=false);
-
-            for pub_nameN = pub_name
-
-                self.(pub_nameN{:}) = dj.DJProperty(self, pub_nameN{:});
+                djTbl
+                djProp dj.DJProperty
+                getMethod function_handle
 
             end
 
+            arguments (Repeating)
+                varargin
+            end
+
+            if isempty(djProp) || djProp.parent ~= djTbl
+
+                djProp = dj.DJProperty(djTbl, getMethod, varargin{:});
+                djProp.demand();
+
+            end
+            val = djProp.value;   
+
         end
+        
 
-        function prop_names = list_dj_properties_(self)
-
-            meta_class = meta.class.fromName(class(self));
-            % Filter the list to find the properties
-            isDJProp = arrayfun(@(p) ...
-                ~isempty(p.Validation) && ... % Does it have validation?
-                ~isempty(p.Validation.Class) && ... % Is the validation a class?
-                strcmp(p.Validation.Class.Name, 'dj.DJProperty'), ... % Does the name match?
-                meta_class.PropertyList);
-            prop_names = {meta_class.PropertyList(isDJProp).Name};
-
-        end
-
-
-    end
+    end   
 
     methods (Access = private)
 
