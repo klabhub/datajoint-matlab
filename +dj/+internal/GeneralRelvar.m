@@ -872,7 +872,7 @@ function cond = struct2cond(keys, header)
             value = strrep(value, '-', '');
             assert(ischar(value) && length(value) == 32, ...
                 'Value for key.%s must be a uuid HEX string.', field{1});
-            value = sprintf('X''%s''', escapeString(value));
+            value = sprintf('X''%s''', escapeString(value));        
         else
             assert((isnumeric(value) || islogical(value)) && isscalar(value), ...
                 'Value for key.%s must be a numeric scalar', field{1});
@@ -881,7 +881,18 @@ function cond = struct2cond(keys, header)
             elseif isa(value, 'int64')
                 value = sprintf('%i', value);
             else
-                value = sprintf('%1.16g', value);
+                if contains(attr.type,'decimal','IgnoreCase',true)
+                    % Handle decimal SQL types
+                    tokens = regexp(attr.type, 'decimal\((\d+),(\d+)\)', 'tokens');
+                    p = str2double(tokens{1}{1}); % total digits (precision)
+                    s = str2double(tokens{1}{2}); % scale (digits after decimal)
+                    % Field width = total digits + decimal point
+                    % (and optionally room for a minus sign if needed)                   
+                    fmt = sprintf('%%%d.%df', p+1, s);
+                else
+                    fmt = '%1.16g';
+                end
+                value = sprintf(fmt, value);
             end
         end
     end
