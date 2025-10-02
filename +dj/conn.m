@@ -18,10 +18,16 @@
 % Once established during the first invocation, the connection object cannot
 % be changed. To reset the connection, use 'clear functions' or 'clear classes'.
 
-function connObj = conn(host, user, pass, initQuery, reset, use_tls, nogui)
+function connObj = conn(host, user, pass, initQuery, reset, use_tls, nogui,assumeConnected)
 
 persistent CONN
-
+if nargin <8
+    if isempty(CONN)
+        assumeConnected = false;
+    else
+        assumeConnected = CONN.assumeConnected;
+    end
+end
 if nargin < 5 || isempty(reset)
     reset = false;
 end
@@ -111,6 +117,8 @@ if ~connObj.isConnected
         rethrow(e) 
     end
 end
+
+connObj.assumeConnected = assumeConnected;
 
 if nargout==0
     fprintf('database connection id: %d\n', connObj.serverId);    
