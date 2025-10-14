@@ -1,5 +1,7 @@
 classdef Connection < handle
-
+    properties (SetAccess =public)
+        assumeConnected = false
+    end
     properties(SetAccess = private)
         host
         user
@@ -159,7 +161,11 @@ classdef Connection < handle
 
 
         function ret = get.isConnected(self)
-            ret = ~isempty(self.connId) && 0==mym(self.connId, 'status');
+            if self.assumeConnected
+                ret = true;
+            else
+                ret = ~isempty(self.connId) && 0==mym(self.connId, 'status');
+            end
 
             if ~ret && self.inTransaction
                 if dj.config('databaseReconnect_transaction')

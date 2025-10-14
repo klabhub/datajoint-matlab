@@ -161,7 +161,9 @@ classdef (Abstract) DJInstance < handle
 
                 else
 
-                    [varargout{1:nargout}] = cat(1,tpl.(col_name{:}));
+                    rows = cellfun(@(x) makeStringIfChar(x), {tpl.(col_name{:})});
+                    [varargout{1:nargout}] = cat(1,rows);
+                    
                 end
             else
 
@@ -174,5 +176,14 @@ classdef (Abstract) DJInstance < handle
 
     end
 
+
+end
+
+function x = makeStringIfChar(x)
+% Force convert to string if x is a character
+
+if ischar(x)
+    x = string(x);
+end
 
 end

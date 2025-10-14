@@ -1,4 +1,5 @@
 *.m~
+*.asv
 mym/
 *.env
 notebook
@@ -13,4 +14,3 @@ macos.*
 *.mltbx
 Jobs.m
 .DS_Store
-*.asv
