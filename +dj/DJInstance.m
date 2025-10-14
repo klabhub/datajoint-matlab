@@ -75,40 +75,9 @@ classdef (Abstract) DJInstance < handle
                 else
                     % Normal Case: It's a property, a method with outputs, or the 
                     % caller wants no outputs. Let builtin handle it normally.
-                    if nargout > 0
-                        [varargout{1:nargout}] = builtin('subsref', djTbl, s);
-                    else
-                        builtin('subsref', djTbl, s);
-                    end
+                    [varargout{1:nargout}] = builtin('subsref', djTbl, s);
                 end
-                
-                % % For all other indexing, use the built-in subsref
-                % % This ensures that C1.Property, C1{...}, C1(other_indices), etc.
-                % % work as expected.
-                % 
-                % % nargout is important to correctly handle cases like:
-                % % val = C1.Data; (nargout = 1)
-                % % C1.someMethod(); (nargout = 0)
-                % 
-                % % no of requested outputs
-                % n_declared_op = nargout; %can be 1 even when the function 
-                % % has 0 outputs. We need to check the metaclass for this 
-                % % special case
-                % if strcmp(s(1).type, '.') && ismethod(djTbl, s(1).subs)
-                % 
-                %     % check if asked to return any output                    
-                %     %metaclass
-                %     mc = metaclass(djTbl);
-                %     method_meta = mc.MethodList(strcmp({mc.MethodList.Name}, s(1).subs));
-                %     n_declared_op = numel(method_meta.OutputNames);
-                % 
-                % end
-                % 
-                % if n_declared_op > 0
-                %     [varargout{1:nargout}] = builtin('subsref', djTbl, s);
-                % else
-                %     builtin('subsref', djTbl, s);
-                % end
+                               
             end
         end
 
@@ -117,9 +86,34 @@ classdef (Abstract) DJInstance < handle
             n = numel(djTbl);
 
         end
+
+        function val = get_dj_property(djTbl, djProp, getMethod, varargin)
+
+            % Wrapper function to call djProperty values 
+            arguments
+
+                djTbl
+                djProp dj.DJProperty
+                getMethod function_handle
+
+            end
+
+            arguments (Repeating)
+                varargin
+            end
+
+            if isempty(djProp) || djProp.parent ~= djTbl
+
+                djProp = dj.DJProperty(djTbl, getMethod, varargin{:});
+                djProp.demand();
+
+            end
+            val = djProp.value;   
+
+        end
         
 
-    end
+    end   
 
     methods (Access = private)
 
@@ -159,10 +153,12 @@ classdef (Abstract) DJInstance < handle
             tpl = fetch(djTbl.restrict_(subs1), col_name{:});
 
             if ~strcmp(col_name, '*')
-
+                
                 if all(cellfun(@(x) isstruct(x), {tpl.(col_name{:})}))
                     
-                    [varargout{1:nargout}] = cat(1,gen.force_mergestruct(tpl.(col_name{:})));                      
+                    % if column contains structs, return struct array
+                    [varargout{1:nargout}] = catstruct(1, tpl.(col_name{:}));       
+
                 else
 
                     rows = cellfun(@(x) makeStringIfChar(x), {tpl.(col_name{:})});
