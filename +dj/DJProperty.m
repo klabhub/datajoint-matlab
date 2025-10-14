@@ -79,13 +79,20 @@ classdef DJProperty < handle
 
             tbl = self.parent;
             tpls = fetchtable(self.parent,self.identity_vars{:});
-            [gru, op] = findgroups(tpls(:,self.identity_vars));
+            [gru_idx, op] = findgroups(tpls(:,self.identity_vars));
             tpls = table2struct(tpls);
             
-            only_fetch = find([1, gen.make_row(diff(gru))]);            
+            % only fetch unique entries (rows)
+            isDiffGru = diff(gru_idx);
+            isDiffGru = isDiffGru(:)'; % make it row
+            only_fetch = find([1, isDiffGru]);            
             n_uniq_gru = sum(only_fetch ~= 0);
             props = cell(1, n_uniq_gru);
 
+            % looks convoluted to fetch unique entries like this, might be
+            % improved by using unique(...,'rows') but currently it is
+            % compatible with the cases in which identity_vars can be
+            % different than the primary keys of the parent table
             for ii = 1:n_uniq_gru
 
                 rowN = tbl & tpls(only_fetch(ii));
@@ -93,8 +100,9 @@ classdef DJProperty < handle
 
             end
 
-            op.value = gen.make_column(props);
-            if height(op) == 1% || isequal(props{:})
+            op.value = props(:);
+            % if only a single row, simply output op.value
+            if height(op) == 1
                 op = op.value{1};
             end
             self.value = op;

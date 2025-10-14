@@ -153,10 +153,12 @@ classdef (Abstract) DJInstance < handle
             tpl = fetch(djTbl.restrict_(subs1), col_name{:});
 
             if ~strcmp(col_name, '*')
-
+                
                 if all(cellfun(@(x) isstruct(x), {tpl.(col_name{:})}))
                     
-                    [varargout{1:nargout}] = cat(1,gen.force_mergestruct(tpl.(col_name{:})));                      
+                    % if column contains structs, return struct array
+                    [varargout{1:nargout}] = catstruct(1, tpl.(col_name{:}));       
+
                 else
 
                     [varargout{1:nargout}] = cat(1,tpl.(col_name{:}));
