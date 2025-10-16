@@ -161,8 +161,44 @@ classdef (Abstract) DJInstance < handle
 
                 else
 
-                    rows = cellfun(@(x) makeStringIfChar(x), {tpl.(col_name{:})});
-                    [varargout{1:nargout}] = cat(1,rows);
+                    try
+                        rows = cellfun(@(x) makeStringIfChar(x), {tpl.(col_name{:})});
+                        [varargout{1:nargout}] = cat(1,rows);
+                    catch ME
+
+                        switch ME.identifier
+
+                            case 'MATLAB:cellfun:NotAScalarOutput'
+
+                                % return cell array
+                                rows = cellfun(@(x) makeStringIfChar(x), {tpl.(col_name{:})}, UniformOutput=false);
+                                
+                                try % return concatenated array of the original datatype if possible
+                                    [varargout{1:nargout}] = cat(1,rows{:});
+
+                                catch ME2
+
+                                    switch ME2
+
+                                        case 'MATLAB:catenate:dimensionMismatch'
+                                            % return as cell array
+                                            [varargout{1:nargout}] = cat(1,rows);
+
+                                        otherwise
+
+                                            rethrow(ME2);
+                                            
+                                    end
+
+                                end
+                           
+                            otherwise
+
+                                rethrow(ME);
+
+                        end
+                    end
+                    
                     
                 end
             else
