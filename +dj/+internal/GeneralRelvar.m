@@ -176,7 +176,51 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             n = double(n.n);
         end
         
-        function [ret,keys] = fetch(self, varargin)
+        function [ret,keys,isStructField] = fetch(self, varargin)
+            % Check whether any of the columns match a blob that could be a
+            % struct
+            hdr = self.header; 
+            isStructField = contains(varargin,strcat(hdr.blobNames,'.'));
+            args = varargin(~isStructField);
+            structVar = varargin(isStructField);
+            structName = extractBefore(structVar,'.');            
+            structField = extractAfter(structVar,'.');      
+            structsToFetch = unique(structName);
+            % Call the original DJ fetch
+            ret = fetchDj(self,args{:},structsToFetch{:});
+            if any(isStructField)
+                for i=1:numel(structVar)                    
+                    fieldName = strrep(structVar{i},'.','_');
+                    blobHasField = (cellfun(@(x) isfield(x,structField{i}),{ret.(structName{i})}));
+                    for j=find(blobHasField)
+                        thisValue = ret(j).(structName{i}).(structField{i});                                    
+                        ret(j).(fieldName) = thisValue;
+                    end
+                    if ~any(blobHasField) || isnumeric(thisValue)
+                        [ret(~blobHasField).(fieldName)] = deal(NaN);
+                    elseif isstruct(thisValue)
+                        % Replace missing values with a struct with the
+                        % same field names but not values.
+                        fn =fieldnames(thisValue);
+                        tmp = cell(1,2*numel(fn));
+                        tmp(1:2:end) = fn;
+                        [tmp{2:2:end}] = deal({''});
+                        [ret(~blobHasField).(fieldName)] = deal(struct(tmp{:}));
+                    end                                       
+                end
+            end
+            toRemove = setdiff(structsToFetch,args);
+            if ~isempty(toRemove)
+                ret = rmfield(ret,toRemove{:});
+            end      
+
+            if nargout>1
+                % return primary key structure array
+                keys = dj.struct.proj(ret,self.primaryKey{:});
+            end
+        end
+
+        function [ret,keys] = fetchDj(self, varargin)
             % FETCH retrieve data from a relation as a struct array
             % SYNTAX:
             %    s = self.fetch       % retrieve primary key attributes only
@@ -241,19 +285,29 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             [~, args] = makeLimitClause(varargin{:});
             args = args(cellfun(@ischar, args)); % attribute specifiers
             
-            assert(nargout==length(args) || (nargout==0 && length(args)==1), ...
+            assert(nargout==length(args) || (nargout==0 && isscalar(args)), ...
                 'The number of fetch1() outputs must match the number of requested attributes')
             assert(~isempty(args), 'insufficient inputs')
             assert(~any(strcmp(args,'*')), '"*" is not allowed in fetch1()')
             
-            s = self.fetch(varargin{:});
+            [s,~,isStructField] = self.fetch(varargin{:});
             assert(isscalar(s), 'fetch1 can only retrieve a single existing tuple.')
             
-            % copy into output arguments
+           % copy into output arguments
             varargout = cell(length(args));
             for iArg=1:length(args)
+                % if renamed, use the renamed attribute
+                if isStructField(iArg)
+                    name = strrep(args{iArg},'.','_');
+                    isNumeric = isnumeric(s(1).(name));
+                else
                 name = regexp(args{iArg}, '(\w+)\s*$', 'tokens');
-                varargout{iArg} = s.(name{1}{1});
+                name = name{1}{1};
+                sel = cellfun(@(x) strcmp(x, name), {self.header.attributes.name});
+                isNumeric = self.header.attributes(sel).isNumeric;
+                end                
+                varargout{iArg} = s.(name);
+                
             end
         end
         
@@ -275,25 +329,31 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             [~, args] = makeLimitClause(varargin{:});
             specs = args(cellfun(@ischar, args)); % attribute specifiers
             returnKey = nargout==length(specs)+1;
-            assert(returnKey || (nargout==length(specs) || (nargout==0 && length( ...
-                specs)==1)), ...
+            assert(returnKey || (nargout==length(specs) || (nargout==0 && isscalar(specs))), ...
                 'The number of fetchn() outputs must match the number of requested attributes')
             assert(~isempty(specs),'insufficient inputs')
             assert(~any(strcmp(specs,'*')), '"*" is not allowed in fetchn()')
             
             % submit query
-            s = self.fetch(varargin{:});
+            [s,~,isStructField] = self.fetch(varargin{:});
             
             % copy into output arguments
             varargout = cell(length(specs));
             for iArg=1:length(specs)
                 % if renamed, use the renamed attribute
-                name = regexp(specs{iArg}, '(\w+)\s*$', 'tokens');
-                sel = cellfun(@(x) strcmp(x, name{1}{1}), {self.header.attributes.name});
-                if self.header.attributes(sel).isNumeric
-                    varargout{iArg} = [s.(name{1}{1})]';
+                if isStructField(iArg)
+                    name = strrep(specs{iArg},'.','_');
+                    isNumeric = isnumeric(s(1).(name));
                 else
-                    varargout{iArg} = {s.(name{1}{1})}';
+                name = regexp(specs{iArg}, '(\w+)\s*$', 'tokens');
+                name = name{1}{1};
+                sel = cellfun(@(x) strcmp(x, name), {self.header.attributes.name});
+                isNumeric = self.header.attributes(sel).isNumeric;
+                end
+                if isNumeric
+                    varargout{iArg} = [s.(name)]';
+                else
+                    varargout{iArg} = {s.(name)}';
                 end
             end
             

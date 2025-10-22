@@ -15,7 +15,7 @@ classdef (Abstract) DJInstance < handle
 
             % Check for the specific case: C1(1,:)
             if isQry || isFetch
-                
+
                 assert(isscalar(s(1).subs) || numel(s(1).subs) <= 2, ...
                     'Invalid indexing.');
                 assert(isFetch || (isscalar(s(1).subs) || strcmp(s(1).subs(2),':')), ...
@@ -24,7 +24,7 @@ classdef (Abstract) DJInstance < handle
                 % This is the C1(1,:) case
                 % If it's just C1(1,:) and not C1(1,:).something_else
                 if isQry
-                    
+
                     varargout{1} = djTbl.restrict_(s(1).subs{1});
 
                 else % fetch
@@ -33,7 +33,7 @@ classdef (Abstract) DJInstance < handle
 
                 end
                 if ~isscalar(s)
-                    
+
                     % Handle chained indexing starting with C1(1,:),
                     % e.g., C1(1,:).PropertyName or C1(1,:)(further_indices)
 
@@ -48,8 +48,8 @@ classdef (Abstract) DJInstance < handle
 
             else
 
-                 % Default handling for dot-indexing like obj.property or obj.method()
-                
+                % Default handling for dot-indexing like obj.property or obj.method()
+
                 % Check if this is a method with zero declared outputs
                 isZeroOutputMethod = false;
                 if strcmp(s(1).type, '.')
@@ -64,24 +64,24 @@ classdef (Abstract) DJInstance < handle
                 % --- Corrected Decision Logic ---
                 if isZeroOutputMethod && nargout > 0
                     % Special Case: Caller wants an output, but the method has none.
-                    
+
                     % 1. Call the method, requesting no outputs from it.
                     builtin('subsref', djTbl, s);
-                    
+
                     % 2. Satisfy the caller by creating and assigning empty outputs.
                     varargout = cell(1, nargout);
                     [varargout{:}] = deal([]);
-                    
+
                 else
-                    % Normal Case: It's a property, a method with outputs, or the 
+                    % Normal Case: It's a property, a method with outputs, or the
                     % caller wants no outputs. Let builtin handle it normally.
                     [varargout{1:nargout}] = builtin('subsref', djTbl, s);
                 end
-                               
+
             end
         end
 
-        function n = numArgumentsFromSubscript(djTbl, ~, ~)           
+        function n = numArgumentsFromSubscript(djTbl, ~, ~)
 
             n = numel(djTbl);
 
@@ -89,7 +89,7 @@ classdef (Abstract) DJInstance < handle
 
         function val = get_dj_property(djTbl, djProp, getMethod, varargin)
 
-            % Wrapper function to call djProperty values 
+            % Wrapper function to call djProperty values
             arguments
 
                 djTbl
@@ -108,12 +108,12 @@ classdef (Abstract) DJInstance < handle
                 djProp.demand();
 
             end
-            val = djProp.value;   
+            val = djProp.value;
 
         end
-        
 
-    end   
+
+    end
 
     methods (Access = private)
 
@@ -128,7 +128,7 @@ classdef (Abstract) DJInstance < handle
 
             % add option to fetch multiple columns by variable name
 
-            n_arg = nargin - 1;            
+            n_arg = nargin - 1;
             assert(n_arg <= 2, 'Invalid indexing with "{}".');
 
             subs1 = varargin{1};
@@ -148,16 +148,16 @@ classdef (Abstract) DJInstance < handle
 
             end
 
-            
+
 
             tpl = fetch(djTbl.restrict_(subs1), col_name{:});
 
             if ~strcmp(col_name, '*')
-                
+
                 if all(cellfun(@(x) isstruct(x), {tpl.(col_name{:})}))
-                    
+
                     % if column contains structs, return struct array
-                    [varargout{1:nargout}] = catstruct(1, tpl.(col_name{:}));       
+                    [varargout{1:nargout}] = catstruct(1, tpl.(col_name{:}));
 
                 else
 
@@ -172,7 +172,7 @@ classdef (Abstract) DJInstance < handle
 
                                 % return cell array
                                 rows = cellfun(@(x) makeStringIfChar(x), {tpl.(col_name{:})}, UniformOutput=false);
-                                
+
                                 try % return concatenated array of the original datatype if possible
                                     [varargout{1:nargout}] = cat(1,rows{:});
 
@@ -187,23 +187,23 @@ classdef (Abstract) DJInstance < handle
                                         otherwise
 
                                             rethrow(ME2);
-                                            
+
                                     end
 
                                 end
-                           
+
                             otherwise
 
                                 rethrow(ME);
 
                         end
                     end
-                    
-                    
+
+
                 end
             else
 
-               [varargout{1:nargout}]  = tpl;
+                [varargout{1:nargout}]  = tpl;
 
             end
 
