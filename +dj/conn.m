@@ -18,7 +18,6 @@
 % Once established during the first invocation, the connection object cannot
 % be changed. To reset the connection, use 'clear functions' or 'clear classes'.
 
-%% HELLO WRLD
 function connObj = conn(host, user, pass, initQuery, reset, use_tls, nogui,assumeConnected)
 
 persistent CONN
