@@ -320,6 +320,7 @@ classdef AutoPopulate < dj.internal.UserRelation
                                 % already populated
                                 self.setJobStatus(key, 'completed');
                             else
+                                startTime = tic;
                                 fprintf('Populating %s for:\n', self.className)
                                 disp(key)
                                 try
@@ -340,6 +341,7 @@ classdef AutoPopulate < dj.internal.UserRelation
                                         errors = [errors; err];         %#ok<AGROW>
                                     end
                                 end
+                                fprintf('Completed in %.1f minutes \n',minutes(seconds(toc(startTime))))
                             end
                         end
                     end
