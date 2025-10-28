@@ -256,11 +256,8 @@ classdef AutoPopulate < dj.internal.UserRelation
                     'Cannot populate a restricted relation. Correct syntax: progress(rel, restriction)'))
             end
             
-            remaining = count((self.getKeySource & varargin) - self);
-            if nargout
-                % return remaning items if asked
-                varargout{1} = remaining;
-            else
+            remainingTbl =  (self.getKeySource & varargin) - self;
+            remaining = count(remainingTbl);
                 fprintf('%s %30s:  ', datestr(now,'yyyy-mm-dd HH:MM:SS'), self.className)
                 total = count(self.getKeySource & varargin);
                 if ~total
@@ -269,7 +266,15 @@ classdef AutoPopulate < dj.internal.UserRelation
                     fprintf('%6.2f%% complete (%d of %d)\n', ...
                         100-100*double(remaining)/double(total), total-remaining, total)
                 end
+            
+            if nargout>0
+                % return remaning items if asked
+                varargout{1} = remaining;
+                if nargout >1 
+                    varargout{2} = remainingTbl;
+                end
             end
+
         end
     end
     
