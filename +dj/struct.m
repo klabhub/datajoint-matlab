@@ -234,6 +234,114 @@ classdef struct
             f = fieldnames(s);
             str = sprintf('%s\n},{...\n%s\n},2);',str,sprintf(' ''%s''',f{:}));
         end
+
+        function s_scalar = array2scalar(s_array)
+            % Converts a struct array into a scalar struct of arrays.
+            % Validates that the input is a struct array and handles uniform vs mixed data.
+
+            arguments
+                s_array struct
+            end
+
+            if isscalar(s_array)
+                s_scalar = s_array;
+                return;
+            end
+
+            N = numel(s_array);
+            fields = fieldnames(s_array);
+            s_scalar = struct();
+
+            for i = 1:numel(fields)
+                fn = fields{i};
+
+                % Extract all elements for this field across the struct array
+                vals = {s_array.(fn)};
+
+                % Validation: Check if the data is purely scalar numeric/logical.
+                % If true, we can safely concatenate it into a clean numeric column vector.
+                % If false (e.g., strings, matrices of varying sizes), keep it as a cell array.
+                is_uniform_scalar = all(cellfun(@isscalar, vals)) && ...
+                    (all(cellfun(@isnumeric, vals)) || all(cellfun(@islogical, vals)));
+
+                if is_uniform_scalar
+                    s_scalar.(fn) = reshape([vals{:}], N, 1);
+                else
+                    s_scalar.(fn) = reshape(vals, N, 1);
+                end
+            end
+        end
+
+        function s_array = scalar2array(s_scalar)
+            % Converts a scalar struct of arrays into a struct array.
+            % Validates that all fields have matching lengths before expanding.
+
+            arguments
+                s_scalar (1,1) struct
+            end
+
+            fields = fieldnames(s_scalar);
+            if isempty(fields)
+                s_array = struct();
+                return;
+            end
+
+            % --- 1. Validation: Determine and Check Lengths ---
+            N = -1;
+
+            for i = 1:numel(fields)
+                fn = fields{i};
+                val = s_scalar.(fn);
+
+                % Determine the length along the primary dimension
+                if isrow(val) && ~isscalar(val) && ~ischar(val)
+                    len = length(val);
+                else
+                    len = size(val, 1);
+                end
+
+                % Verify dimension consistency across all fields
+                if N == -1
+                    N = len;
+                elseif len ~= N
+                    error('StructConvert:DimensionMismatch', ...
+                        'Field "%s" has length %d, but expected length %d to match other fields.', ...
+                        fn, len, N);
+                end
+            end
+
+            % --- 2. Expansion: Build the Struct Array ---
+            % We prepare a cell array of name-value pairs for the struct() constructor
+            struct_args = cell(1, numel(fields) * 2);
+
+            for i = 1:numel(fields)
+                fn = fields{i};
+                val = s_scalar.(fn);
+
+                % Convert numeric/logical arrays back to cell arrays so the
+                % struct() constructor distributes them across the array indices
+                if iscell(val)
+                    val_cell = val;
+                elseif ischar(val)
+                    % Handle character matrices (e.g., N rows of strings)
+                    val_cell = mat2cell(val, ones(N,1), size(val, 2));
+                else
+                    % Handle numeric/logical arrays
+                    if isrow(val)
+                        val = val(:); % Ensure column orientation for safe num2cell
+                    end
+                    val_cell = num2cell(val, 2:ndims(val));
+                end
+
+                struct_args{i*2 - 1} = fn;
+                struct_args{i*2} = val_cell(:); % Force column cell array
+            end
+
+            % Generate the struct array in one vectorized call
+            s_array = struct(struct_args{:});
+        end
+
+
     end
 end
 
