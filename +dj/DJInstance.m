@@ -119,7 +119,7 @@ classdef (Abstract) DJInstance < handle
             end
         end
 
-        function self = query(self, var, rel, val, pv)
+        function self = request(self, var, rel, val, pv)
 
             % queries 
             arguments (Input)
