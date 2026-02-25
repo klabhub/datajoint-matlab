@@ -1,12 +1,45 @@
 classdef (Abstract) DJInstance < handle
 
+    % A utility wrapper class for Datajoint table instances to use indexing
     properties (Dependent)
 
         Table % handle to the unrestricted table
+        variable_names % variable names in header
+        useGPU % whether to useGPU
+        n_gpu
+        isSLURM % true if running a SLURM job
 
     end
-    % A utility wrapper class for Datajoint table instances to use indexing
 
+    properties
+    
+        % if multitask is true, each makeTuple will assume to have been 
+        % assigned multiple cpus per task and run in parallel
+        % submitted script must first instantiate the table, and set
+        % multitask = true before calling parpopulate
+        multiproc (1,1) logical = false 
+
+    end
+
+    properties (Access=protected)
+
+        pool_ % cpu pool to use within makeTuples
+        temp_dir_ = tempdir% directory in which the temp results are written
+        useGPU_ = false
+
+    end
+
+    properties (Constant)
+
+        query_operators_dj_ = {'in', 'not in', '=', '>', '>=', '<', '<=', ...
+            '<>', '~=', '<<', '>>', 'between', '~<<', '~>>','not between'}
+        query_operators_ = {'in', 'not in', '=', '>', '>=', '<', '<=', ...
+            '<>', '<>', 'between', 'between', 'between', 'not between', 'not between', 'not between'}        
+        query_operator_map_ = containers.Map(dj.DJInstance.query_operators_dj_, ...
+            dj.DJInstance.query_operators_)
+        
+    end
+    
     methods
 
         function varargout = subsref(djTbl, s)
@@ -86,6 +119,32 @@ classdef (Abstract) DJInstance < handle
             end
         end
 
+        function self = request(self, var, rel, val, pv)
+
+            % queries 
+            arguments (Input)
+                self 
+            end
+
+            arguments (Input, Repeating)                
+                var {mustBeTableVar_(self, var)}
+                rel {mustBeQueryOperator_(rel)}
+                val 
+            end
+
+            arguments
+                pv.statement = 'and' % 'and', 'or', 
+                % not yet developed: '*', '-', '+'
+            end
+
+            if nargin==1, return; end
+            [var, rel, val, pv.statement] = configureQueryConstituents_( ...
+                var, rel, val, pv.statement);
+            query_str = makeQuery_(var, rel, val, pv.statement);
+            self = self & query_str;
+
+        end
+
         function djTbl = cat(varargin)
             % stacks djTbl instances
             djTbl = stack(varargin{:});
@@ -158,17 +217,65 @@ classdef (Abstract) DJInstance < handle
             val = djProp.value;
 
         end
-
+        
         % --- Get Methods ---
         function djTbl = get.Table(self)
             % get the unsrestricted datajoint table of the instance
             djTbl = feval(class(self));
+        end
+
+        function vars = get.variable_names(self)
+            vars = self.header.names;
+        end
+
+        function u = get.useGPU(self)
+
+            u = self.useGPU_;
+
+        end
+
+        function set.useGPU(self,val)
+
+            arguments
+                self
+                val (1,1) logical
+            end
+            self.useGPU_ = canUseGPU() && val;
+
+        end
+
+        function n = get.n_gpu(self)
+            
+            n = self.useGPU * gpuDeviceCount();
+
+        end
+
+        function i = get.isSLURM(~)
+            % whether running a slirm job or not
+            i=~isempty(getenv('SLURM_JOB_ID')); 
 
         end
         
 
 
     end   
+
+    methods (Access = protected)
+
+        % makeTuple
+        function setup_pool(self, varargin)
+
+            if self.multiproc
+                % setup pool, assign pool
+                % parfor: subclass method
+                self.pool_ = setup_pool_(self.isSLURM, ...
+                    temp_dir=self.temp_dir_);
+
+            end
+
+        end        
+
+    end
 
     methods (Access = private)
 
@@ -278,6 +385,28 @@ classdef (Abstract) DJInstance < handle
 
         end
 
+        function assign_gpu(n_gpu)
+
+            arguments
+
+                n_gpu (1,1) {mustBePositive, mustBeInteger}
+
+            end
+            % RUN THIS WITHIN PARFOR
+            % Check whether it can use gpu
+            % Get the current worker object
+            task = getCurrentTask();
+            if isempty(task), return; end
+
+            % Calculate which GPU this worker should use.
+            % t.ID is the worker ID (1, 2, ..., 8).
+            % We map this to GPU IDs (1, 2) using modulo.
+            gpu_idx = mod(task.ID - 1, n_gpu) + 1;
+            % Select the GPU for this specific worker iteration
+            g = gpuDevice(gpu_idx);
+
+        end
+
     end
 
 end
@@ -300,3 +429,169 @@ assert(isscalar(uniq_type), 'AssertionError:NonuniformInputClasses', 'Input clas
 end
 
 
+function pool = setup_pool_(isSLURM, options)
+% SETUP_POOL Initializes a parallel pool with robust path handling.
+%
+%   Args:
+%       numWorkers (int): Number of workers. If empty or 0, attempts to read
+%                         SLURM_CPUS_PER_TASK, otherwise defaults to local core count.
+%       jobStorageRoot (string/char): The absolute path to the parent directory
+%                                     where temporary job folders will be created.
+%                                     Must be an existing folder.
+
+arguments
+    isSLURM (1,1) logical
+    % Default: Empty (triggers auto-detection)
+    options.n_workers (1,1) double {mustBeNonnegative, mustBeInteger} = 0
+
+    % Default: The system's temporary directory (OS agnostic)
+    % Validation: {mustBeFolder} ensures the path exists before code runs
+    options.temp_dir (1,:) char {mustBeNonempty, mustBeFolder} = tempdir
+end
+
+n_workers = options.n_workers;
+% --- 1. Determine Worker Count ---
+if n_workers == 0 && isSLURM
+    % Try to get Slurm CPU count
+    slurmCPUs = getenv('SLURM_CPUS_PER_TASK');
+    assert(~isempty(slurmCPUs), 'NO SLURM CPUs WERE DETECTED!!');
+    n_workers = str2double(slurmCPUs);
+    % --- 2. Setup Job Storage Location ---
+    % Get Slurm Job ID for unique folder naming (prevents collisions)
+    jobID = getenv('SLURM_JOB_ID');
+
+else
+
+    if n_workers == 0 % default to all cores
+        n_workers = feature('numCores');
+    end
+    jobID = sprintf("localJob%10d",randi(2^32));
+
+end
+
+
+
+% Create the specific subfolder for this job instance
+% Structure: /path/to/storage/matlab_job_12345/
+folderName = sprintf('matlab_job_%s',jobID);
+specificJobDir = fullfile(options.temp_dir, folderName);
+
+% Ensure directory exists (creates it if missing)
+if ~exist(specificJobDir, 'dir')
+    mkdir(specificJobDir);
+end
+% --- 3. Configure and Start Cluster ---
+% Clean up any existing pool
+pool = gcp('nocreate');
+if ~isempty(pool)
+    % If a pool exists with WRONG size or location, kill it.
+    % If it matches perfectly, just return it (saves time).
+    if pool.NumWorkers == n_workers       
+        return;
+    else
+        delete(pool);
+    end
+end
+
+c = parcluster('local');
+c.NumWorkers = n_workers;
+c.JobStorageLocation = specificJobDir;
+
+fprintf('Starting parallel pool...\n');
+fprintf('   Workers: %d\n', n_workers);
+fprintf('   Storage: %s\n', specificJobDir);
+
+% Launch the pool
+% 'SpmdEnabled', false if only using parfor and parfeval. it blocks
+% inter-worker communication
+pool = parpool(c, n_workers, SpmdEnabled = false);
+end
+
+
+
+%% === Input Validation Functions ===
+
+function mustBeQueryOperator_(op)
+mustBeMember(op, dj.DJInstance.query_operator_map_.keys);
+end
+
+function mustBeTableVar_(self, var)
+
+%% function to check is var exists in table
+mustBeMember(var, self.variable_names);
+end
+
+function [var, rel, val, statement] = configureQueryConstituents_(var, rel, val, statement)
+
+n_args = numel(var);
+
+for ii = 1:n_args
+
+    switch var{ii}
+
+        case {'<>', '=', '~='}
+            assert(isscalar(val{ii}) || ischar(val{ii}))
+        case {'<<', '~<<'}
+            assert( ...
+                isnumeric(val{ii}) && numel(val{ii}) == 2 && diff(val{ii})>0, ...
+                "Use '<<' operator with an increasing numeric array of 2.");
+            
+        case {'>>', '~>>'}
+            assert( ...
+                isnumeric(val{ii}) && numel(val{ii}) == 2 && diff(val{ii})<0, ...
+                "Use '>>' operator with a decreasing numeric array of 2.");
+        case {'in', 'not in', 'like'}                        
+            continue
+        otherwise
+            assert(isnumeric(val{ii}), "Query value must be numeric.")
+    end
+end
+
+% and/or operators
+if ~iscell(statement), statement = {statement}; end
+n_statement = numel(statement);
+if n_statement==1
+    
+    statement = repelem(statement, n_args-1);
+    n_statement = numel(statement);
+end
+assert(n_args==1 || n_statement==n_args-1, "Logical statement does not match number of queries requested.");
+
+end
+
+function q = makeQuery_(var, rel, val, statement)
+
+n_args = numel(var);
+
+
+
+operators = cellfun(@(rel, val) dj.DJInstance.query_operator_map_(rel), ...
+    rel, UniformOutput=false);
+queries = cell(1,n_args);
+for ii = 1:n_args
+
+    switch operators{ii}
+        case {'<>','='}
+
+            val_str = string(val{ii});
+        case {'between', 'not between'}
+            valN = val{ii};
+            val_str = sprintf('%f and %f', val{ii}(1), val{ii}(2));
+            
+        case {'in', 'not in'}                        
+            val_str = sprintf('(%s)', join(string(val{ii}),","));
+        otherwise
+            error('not developed yet')
+    end
+
+    queries{ii} = sprintf('%s %s %s', var{ii}, operators{ii}, val_str);
+
+end
+
+if n_args > 1
+    q = sprintf(join(string(queries), ' %s '), statement{:});
+else
+    q = queries{1};
+end
+
+end

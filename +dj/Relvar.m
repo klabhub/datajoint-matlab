@@ -360,6 +360,7 @@ classdef Relvar < dj.internal.GeneralRelvar & dj.internal.Table
             end
             % issue query
             command(end)=0;
+            [blobs,~] = dj.validateBlob(blobs);
             self.schema.conn.query(command, blobs{:});
         end
         
