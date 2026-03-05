@@ -119,7 +119,7 @@ classdef (Abstract) DJInstance < handle
             end
         end
 
-        function self = request(self, var, rel, val, pv)
+        function self = request(self, var, oper, val, pv)
 
             % queries 
             arguments (Input)
@@ -128,7 +128,7 @@ classdef (Abstract) DJInstance < handle
 
             arguments (Input, Repeating)                
                 var {mustBeTableVar_(self, var)}
-                rel {mustBeQueryOperator_(rel)}
+                oper {mustBeQueryOperator_(oper)}
                 val 
             end
 
@@ -138,9 +138,9 @@ classdef (Abstract) DJInstance < handle
             end
 
             if nargin==1, return; end
-            [var, rel, val, pv.statement] = configureQueryConstituents_( ...
-                var, rel, val, pv.statement);
-            query_str = makeQuery_(var, rel, val, pv.statement);
+            [var, oper, val, pv.statement] = configureQueryConstituents_( ...
+                var, oper, val, pv.statement);
+            query_str = makeQuery_(var, oper, val, pv.statement);
             self = self & query_str;
 
         end
@@ -527,7 +527,7 @@ n_args = numel(var);
 
 for ii = 1:n_args
 
-    switch var{ii}
+    switch rel{ii}
 
         case {'<>', '=', '~='}
             assert(isscalar(val{ii}) || ischar(val{ii}))
@@ -572,14 +572,24 @@ for ii = 1:n_args
 
     switch operators{ii}
         case {'<>','='}
-
-            val_str = string(val{ii});
-        case {'between', 'not between'}
-            valN = val{ii};
-            val_str = sprintf('%f and %f', val{ii}(1), val{ii}(2));
-            
-        case {'in', 'not in'}                        
-            val_str = sprintf('(%s)', join(string(val{ii}),","));
+            if isnumeric(val{ii})
+                val_str = string(val{ii});
+            else
+                val_str = sprintf("'%s'", val{ii});
+            end
+        case {'between', 'not between'}            
+            val_str = sprintf('%f and %f', val{ii}(1), val{ii}(2));          
+        case {'in', 'not in'}
+            if isnumeric(val{ii})
+                valN = string(val{ii});
+                fspec = '(%s)';
+                delimiter = ',';
+            else
+                valN = val{ii};
+                fspec = "('%s')";
+                delimiter = "','";
+            end
+            val_str = sprintf(fspec, valN, delimiter);
         otherwise
             error('not developed yet')
     end
