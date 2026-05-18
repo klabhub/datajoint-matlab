@@ -1,5 +1,10 @@
 classdef (Abstract) DJInstance < handle
 
+    properties (Dependent)
+
+        Table % handle to the unrestricted table
+
+    end
     % A utility wrapper class for Datajoint table instances to use indexing
 
     methods
@@ -81,7 +86,49 @@ classdef (Abstract) DJInstance < handle
             end
         end
 
-        function n = numArgumentsFromSubscript(djTbl, ~, ~)
+        function djTbl = cat(varargin)
+            % stacks djTbl instances
+            djTbl = stack(varargin{:});
+        end
+        
+        function djTbl = horzcat(varargin)
+            % stacks djTbl instances
+            djTbl = stack(varargin{:});
+
+        end
+
+        function djTbl = vertcat(varargin)
+            % stacks djTbl instances
+            djTbl = stack(varargin{:});
+                        
+        end
+
+        function djTbl = stack(tables)
+
+            arguments (Repeating)
+
+                tables dj.DJInstance
+
+            end
+
+            if nargin == 1, djTbl = tables{1}; return; end
+            
+            % union of multiple djInstances of same type                      
+            check_class_uniformity_(tables{:});
+
+            self = tables{1}; 
+            tables = cellfun(@(x) proj(x), tables, UniformOutput=false);
+            unrestricted_table = self.Table;
+            djTbl = unrestricted_table & (proj(tables{1}) | proj(tables{2}));
+            for iArg = 3:nargin
+                
+                djTbl = unrestricted_table & (proj(djTbl) | proj(tables{iArg}));
+
+            end
+
+        end
+
+        function n = numArgumentsFromSubscript(djTbl, ~, ~)           
 
             n = numel(djTbl);
 
@@ -112,8 +159,16 @@ classdef (Abstract) DJInstance < handle
 
         end
 
+        % --- Get Methods ---
+        function djTbl = get.Table(self)
+            % get the unsrestricted datajoint table of the instance
+            djTbl = feval(class(self));
 
-    end
+        end
+        
+
+
+    end   
 
     methods (Access = private)
 
@@ -208,10 +263,22 @@ classdef (Abstract) DJInstance < handle
             end
 
 
-        end
+        end       
 
     end
 
+    methods (Access = protected, Static)
+
+        function isUniform = check_superclass_uniformity_(varargin)
+
+            % checks if all tables belong to the same class
+            types = cellfun(@(x) string(class(x)), varargin);
+            uniq_type = unique(types);
+            isUniform = ~isscalar(uniq_type);            
+
+        end
+
+    end
 
 end
 
@@ -223,3 +290,13 @@ if ischar(x)
 end
 
 end
+
+function check_class_uniformity_(varargin)
+
+types = cellfun(@(x) string(class(x)), varargin);
+uniq_type = unique(types);
+assert(isscalar(uniq_type), 'AssertionError:NonuniformInputClasses', 'Input classes must be uniform.');
+
+end
+
+
