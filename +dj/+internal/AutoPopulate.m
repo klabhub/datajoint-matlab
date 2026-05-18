@@ -317,6 +317,9 @@ classdef AutoPopulate < dj.internal.UserRelation
                 fprintf('\n**%s: Found %d unpopulated keys\n\n', self.className, length(unpopulated))
                 
                 self.timeoutAttempt = 1;
+                totalCount     = length(unpopulated);
+                completedCount = 0;
+                populateStart  = tic;
                 while ~isempty(unpopulated)
                     self.timedOut = [];
                     for key = unpopulated'
@@ -324,6 +327,7 @@ classdef AutoPopulate < dj.internal.UserRelation
                             if exists(self & key)
                                 % already populated
                                 self.setJobStatus(key, 'completed');
+                                completedCount = completedCount + 1;
                             else
                                 startTime = tic;
                                 fprintf('Populating %s for:\n', self.className)
@@ -346,7 +350,13 @@ classdef AutoPopulate < dj.internal.UserRelation
                                         errors = [errors; err];         %#ok<AGROW>
                                     end
                                 end
+                                completedCount = completedCount + 1;
                                 fprintf('Completed in %.1f minutes \n',minutes(seconds(toc(startTime))))
+                                remaining = totalCount - completedCount;
+                                elapsed   = toc(populateStart);
+                                eta       = elapsed / completedCount * remaining;
+                                fprintf('Progress: %d / %d done, %d remaining, ETA %.1f min\n', ...
+                                    completedCount, totalCount, remaining, eta / 60)
                             end
                         end
                     end
