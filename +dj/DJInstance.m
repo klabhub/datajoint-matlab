@@ -1,12 +1,15 @@
 classdef (Abstract) DJInstance < handle
-
+    % A utility wrapper class for Datajoint table instances to use indexing
+    
     properties (Dependent)
 
         Table % handle to the unrestricted table
-
+        attributes table
+        keys
+        primary
+        secondary
     end
-    % A utility wrapper class for Datajoint table instances to use indexing
-
+    
     methods
 
         function varargout = subsref(djTbl, s)
@@ -114,7 +117,7 @@ classdef (Abstract) DJInstance < handle
             if nargin == 1, djTbl = tables{1}; return; end
             
             % union of multiple djInstances of same type                      
-            check_class_uniformity_(tables{:});
+            verify_class_uniformity_(tables{:});
 
             self = tables{1}; 
             tables = cellfun(@(x) proj(x), tables, UniformOutput=false);
@@ -157,7 +160,159 @@ classdef (Abstract) DJInstance < handle
             end
             val = djProp.value;
 
-        end
+        end        
+        
+        function uniq_vals = unique(self, keys, pv)
+            % returns unique values of key(s)
+            %   returns a vector if a single key requested, otherwise
+            %   returns a table of combinations
+            arguments
+                self                 
+            end
+
+            arguments (Repeating)
+                keys char
+            end
+
+            arguments
+                pv.runtime (1,1) double {mustBePositive} = 5 % Max runtime in seconds
+            end
+
+
+            assert(all(ismember(keys, self.keys)), 'Unrecognized key(s)!!')
+
+            sql_qry = sprintf('SET STATEMENT max_statement_time=%g FOR SELECT DISTINCT %s FROM %s', pv.runtime, strjoin(keys, ', '), self.sql);
+            
+            try
+                % Execute using the current instance's connection
+                uniq_vals = query(self.schema.conn, sql_qry);
+            catch ME
+                if contains(ME.message, 'max_statement_time', 'IgnoreCase', true)
+                    error('dj:unique:Timeout', 'Query exceeded the maximum runtime of %g seconds.', pv.runtime);
+                else
+                    rethrow(ME);
+                end
+            end
+
+            if isscalar(keys)
+                uniq_vals = uniq_vals.(keys{1});
+            else
+                uniq_vals = struct2table(uniq_vals);
+            end
+
+        end % UNIQUE()
+
+        function self = query(self, varargin)
+            n_arg = numel(varargin);
+            ii = 1;
+            table_op = '&';
+            
+            while ii <= n_arg
+                arg = varargin{ii};
+                
+                if ischar(arg) || isstring(arg)
+                    arg = char(arg);
+                    
+                    if ismember(arg, {'*', '&', '-', '+'})
+                        table_op = arg;
+                        ii = ii + 1;
+                        continue;
+                    end
+                    
+                    is_raw_string = (ii == n_arg) || ...
+                        isa(varargin{ii+1}, 'dj.DJInstance') || ...
+                        (ischar(varargin{ii+1}) && ismember(char(varargin{ii+1}), {'*', '&', '-', '+'}));
+                    
+                    if is_raw_string
+                        self = self.applyOperator(table_op, arg);
+                        table_op = '&';
+                        ii = ii + 1;
+                    else
+                        key = arg;
+                        val = varargin{ii+1};
+                        
+                        tokens = split(strtrim(key), ' ');
+                        field_name = tokens{1};
+                        
+                        if numel(tokens) > 1
+                            rel_op = strjoin(tokens(2:end), ' ');
+                        else
+                            if numel(val) > 1 && isnumeric(val)
+                                rel_op = 'IN';
+                            else
+                                rel_op = '=';
+                            end
+                        end
+                        
+                        % 2. Conform types
+                        val = self.conform_data(field_name, val);
+                        
+                        % Format value for SQL string
+                        rel_op_upper = upper(strtrim(rel_op));
+                        is_str_val = isstring(val) || ischar(val) || iscellstr(val);
+                        
+                        if ismember(rel_op_upper, {'IN', 'NOT IN'})
+                            if is_str_val
+                                val_str = sprintf('"%s",', val);
+                            else
+                                val_str = sprintf('%g,', val);
+                            end
+                            val_str = sprintf('(%s)', val_str(1:end-1));
+                        elseif ismember(rel_op_upper, {'IS', 'IS NOT'})
+                            val_str = char(val); % e.g., NULL
+                        else
+                            if is_str_val
+                                val_str = sprintf('"%s"', char(val));
+                            else
+                                val_str = num2str(val);
+                            end
+                        end
+                        
+                        % 3. Create and apply query
+                        sql_cond = sprintf('%s %s %s', field_name, rel_op, val_str);
+                        self = self.applyOperator(table_op, sql_cond);
+                        
+                        table_op = '&';
+                        ii = ii + 2;
+                    end
+                    
+                elseif isa(arg, 'dj.Relational')
+                    self = self.applyOperator(table_op, arg);
+                    table_op = '&';
+                    ii = ii + 1;
+                else
+                    error('Unsupported argument type at index %d', ii);
+                end
+            end
+
+        end % END query()
+
+        function val = conform_data(self, field_name, val)
+            % Translates MATLAB datatypes to match DataJoint table attributes
+            attr = self.attributes;
+            
+            if ismember(field_name, attr.name)
+                field_type = attr.type{strcmp(attr.name, field_name)};
+                is_string_type = contains(field_type, {'char', 'date', 'time', 'enum'}, 'IgnoreCase', true);
+                
+                if is_string_type
+                    % Convert numeric or char to string array
+                    if isnumeric(val) || islogical(val) || ischar(val)
+                        val = string(val);
+                    end
+                else
+                    % Convert string or char to double for numeric fields
+                    if isstring(val) || ischar(val)
+                        val = str2double(val);
+                    end
+                end
+            else
+                % Default string conversion for safety if field is unlisted
+                if ischar(val)
+                    val = string(val);
+                end
+            end
+        end % END convert()
 
         % --- Get Methods ---
         function djTbl = get.Table(self)
@@ -165,12 +320,47 @@ classdef (Abstract) DJInstance < handle
             djTbl = feval(class(self));
 
         end
+
+        function attr = get.attributes(self)
+
+            attr = struct2table(self.header.attributes);
+
+        end
+
+        function varnames = get.keys(self)
+            % all keys
+            varnames = self.attributes.name;
+        end
         
+        function varnames = get.primary(self)
+            % primary keys
+            varnames = self.primaryKey;
+        end
+
+        function varnames = get.secondary(self)
+            % secondary keys
+            varnames = setdiff(self.keys, self.primary);
+        end
 
 
     end   
 
     methods (Access = private)
+
+        function obj = applyOperator(obj, op, right_operand)
+            switch op
+                case '&'
+                    obj = obj & right_operand;
+                case '-'
+                    obj = obj - right_operand;
+                case '*'
+                    obj = obj * right_operand;
+                case '+'
+                    obj = obj + right_operand;
+                otherwise
+                    error('Unsupported table operator: %s', op);
+            end
+        end
 
         function rstrDJTbl = restrict_(djTbl,idx)
 
@@ -202,8 +392,6 @@ classdef (Abstract) DJInstance < handle
                 col_name = {char(varargin{2})};
 
             end
-
-
 
             tpl = fetch(djTbl.restrict_(subs1), col_name{:});
 
@@ -269,7 +457,7 @@ classdef (Abstract) DJInstance < handle
 
     methods (Access = protected, Static)
 
-        function isUniform = check_superclass_uniformity_(varargin)
+        function isUniform = verify_superclass_uniformity_(varargin)
 
             % checks if all tables belong to the same class
             types = cellfun(@(x) string(class(x)), varargin);
@@ -291,7 +479,7 @@ end
 
 end
 
-function check_class_uniformity_(varargin)
+function verify_class_uniformity_(varargin)
 
 types = cellfun(@(x) string(class(x)), varargin);
 uniq_type = unique(types);
