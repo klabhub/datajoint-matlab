@@ -100,7 +100,14 @@ classdef GeneralRelvar < matlab.mixin.Copyable
                 end
             end
             if dj.config('displayCount')
-                fprintf('%d tuples (%.3g s)\n\n', self.count, toc)
+                countLimit = dj.config('countLimit');
+                [nrTuples, isCapped] = self.countUpTo(countLimit);
+                if isCapped
+                    countText = sprintf('>%d', countLimit);
+                else
+                    countText = sprintf('%d', nrTuples);
+                end
+                fprintf('%s tuples (%.3g s)\n\n', countText, toc)
             end
         end
         
@@ -174,6 +181,47 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             [~, sql_] = self.compile(3);
             n = self.conn.query(sprintf('SELECT count(*) as n FROM %s', sql_));
             n = double(n.n);
+        end
+
+        function [n, isCapped] = countUpTo(self, limit)
+            % COUNTUPTO - count at most LIMIT matching tuples.
+            %
+            % N is exact when IS CAPPED is false. When IS CAPPED is true,
+            % there are more than LIMIT matching tuples and N equals LIMIT.
+            % The bounded inner query lets the server stop after LIMIT+1
+            % matches instead of scanning the complete relation.
+            if ~isscalar(limit) || isnan(limit) || limit < 1 || ...
+                    (~isinf(limit) && limit ~= floor(limit))
+                error('DataJoint:invalidCountLimit', ...
+                    'The count limit must be a positive integer or Inf.');
+            end
+
+            if isinf(limit)
+                n = self.count;
+                isCapped = false;
+                return;
+            end
+
+            [~, sql_] = self.compile(3);
+            boundedSql = sprintf([ ...
+                'SELECT COUNT(*) AS n FROM (' ...
+                'SELECT 1 FROM %s LIMIT %d' ...
+                ') AS bounded_count'], sql_, limit + 1);
+            result = self.conn.query(boundedSql);
+            observed = double(result.n);
+            isCapped = observed > limit;
+            n = min(observed, limit);
+        end
+
+        function yes = hasAtLeast(self, threshold)
+            % HASATLEAST - true when the relation has THRESHOLD or more tuples.
+            if ~isscalar(threshold) || ~isfinite(threshold) || ...
+                    threshold < 1 || threshold ~= floor(threshold)
+                error('DataJoint:invalidCountLimit', ...
+                    'The count threshold must be a positive integer.');
+            end
+            [n, isCapped] = self.countUpTo(threshold);
+            yes = isCapped || n >= threshold;
         end
         
         function [ret,keys,isStructField] = fetch(self, varargin)

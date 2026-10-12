@@ -13,6 +13,7 @@ classdef Settings < matlab.mixin.Copyable
             'loglevel', 'INFO', ...
             'safemode', true, ...
             'displayLimit', 12, ... how many rows to display when previewing a relation
+            'countLimit', 1000, ... maximum rows to count before reporting an approximate count; Inf for exact counts
             'displayDiagram_hierarchy_radius', [2 1], ...    levels up and down the hierachy to display in `erd schema.Table`
             'displayDiagram_font_size', 12, ...  font size to use in ERD labels
             'displayCount', true, ... optionally display count of records in result
