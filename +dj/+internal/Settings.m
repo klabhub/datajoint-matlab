@@ -14,6 +14,7 @@ classdef Settings < matlab.mixin.Copyable
             'safemode', true, ...
             'displayLimit', 12, ... how many rows to display when previewing a relation
             'countLimit', 1000, ... maximum rows to count before reporting an approximate count; Inf for exact counts
+            'rowDeleteChunk', Inf, ... chunk size for large deletes; empty or Inf uses one delQuick statement
             'displayDiagram_hierarchy_radius', [2 1], ...    levels up and down the hierachy to display in `erd schema.Table`
             'displayDiagram_font_size', 12, ...  font size to use in ERD labels
             'displayCount', true, ... optionally display count of records in result

@@ -31,8 +31,98 @@ classdef Relvar < dj.internal.GeneralRelvar & dj.internal.Table
                     self.sql)).count;
             end
         end
-        
-        
+
+
+        function count = delQuickChunks(self, chunkSize)
+            % DELQUICKCHUNKS - delete matching tuples in server-side chunks.
+            count = 0;
+            while true
+                self.schema.conn.query(sprintf('DELETE FROM %s LIMIT %d', ...
+                    self.sql, chunkSize));
+                result = self.schema.conn.query('SELECT ROW_COUNT() AS n');
+                n = double(result.n);
+                count = count + n;
+                if n == 0
+                    break
+                end
+            end
+        end
+
+
+        function [count, isCapped, isApprox] = estimatedDeleteCount(self, limit, isRoot)
+            % ESTIMATEDDELETECOUNT Estimate matching tuples.
+            % The delete planner uses EXPLAIN; chunkedDelete can request a
+            % bounded root count when it explicitly supplies ISROOT.
+            if nargin > 2 && isRoot
+                [count, isCapped] = countUpTo(self, limit);
+                isApprox = false;
+                return;
+            end
+
+            isCapped = false;
+            if isinf(limit)
+                explainSql = sprintf('EXPLAIN SELECT 1 FROM %s', self.sql);
+            else
+                explainSql = sprintf('EXPLAIN SELECT 1 FROM %s LIMIT %d', ...
+                    self.sql, limit + 1);
+            end
+            result = self.schema.conn.query(explainSql);
+            if isempty(result)
+                count = 0;
+                isApprox = true;
+                return;
+            end
+
+            fields = fieldnames(result);
+            rowsField = fields{find(strcmpi(fields, 'rows'), 1)};
+            tableField = fields{find(strcmpi(fields, 'table'), 1)};
+            rawRows = result.(rowsField);
+            rawTables = result.(tableField);
+            rowEstimates = zeros(size(rawRows));
+            for k = 1:numel(rawRows)
+                if ischar(rawRows{k})
+                    rowEstimates(k) = str2double(rawRows{k});
+                else
+                    rowEstimates(k) = double(rawRows{k});
+                end
+            end
+
+            % EXPLAIN returns one row estimate per plan table. Map those
+            % estimates by table name so the estimate belongs to the table
+            % being deleted, rather than to a nested parent relation.
+            rowsByTable = containers.Map('KeyType', 'char', 'ValueType', 'double');
+            cumulativeRows = 1;
+            for k = 1:numel(rawTables)
+                tableName = rawTables{k};
+                if iscell(tableName)
+                    tableName = tableName{1};
+                end
+                tableName = strrep(char(tableName), '`', '');
+                if ~contains(tableName, '.')
+                    tableName = sprintf('%s.%s', self.schema.dbname, tableName);
+                end
+                if ~isnan(rowEstimates(k))
+                    cumulativeRows = cumulativeRows * max(0, rowEstimates(k));
+                    if isKey(rowsByTable, tableName)
+                        rowsByTable(tableName) = max(rowsByTable(tableName), cumulativeRows);
+                    else
+                        rowsByTable(tableName) = cumulativeRows;
+                    end
+                end
+            end
+
+            targetName = sprintf('%s.%s', self.schema.dbname, self.plainTableName);
+            if isKey(rowsByTable, targetName)
+                count = round(max(0, rowsByTable(targetName)));
+            else
+                % Keep a conservative fallback for plans that hide the
+                % target table behind a derived relation.
+                count = round(max(max(0, rowEstimates)));
+            end
+            isApprox = true;
+        end
+
+
         function del(self)
             % DEL - remove all tuples of the relation from its table
             % and, recursively, all matching tuples in dependent tables.
@@ -117,26 +207,56 @@ classdef Relvar < dj.internal.GeneralRelvar & dj.internal.Table
                 
                 fprintf '\nABOUT TO DELETE:'
                 counts = nan(size(rels));
+                isCapped = false(size(rels));
+                isApprox = false(size(rels));
+                countLimit = dj.config('countLimit');
                 for i=1:numel(rels)
-                    counts(i) = rels(i).count;
+                    isRoot = strcmp(rels(i).fullTableName, self.fullTableName);
+                    [counts(i),isCapped(i),isApprox(i)] = ...
+                        rels(i).estimatedDeleteCount(countLimit,isRoot);
                     if counts(i)
-                        fprintf('\n%8d tuples from %s (%s)', counts(i), ...
+                        fprintf('\n\t');
+                        if isCapped(i)
+                            fprintf('>')
+                        elseif isApprox(i)
+                            fprintf('~')
+                        end
+                        fprintf('%d tuples from %s (%s)', counts(i), ...
                             rels(i).fullTableName, rels(i).info.tier)
                     end
                 end
                 fprintf \n\n
-                rels = rels(counts>0);
+                % EXPLAIN can estimate zero for a relation that has rows,
+                % so retain all approximate descendants for deletion.
+                keep = counts>0 | isApprox;
+                rels = rels(keep);
+                counts = counts(keep);
+                isCapped = isCapped(keep);
                 
                 % confirm and delete
                 if dj.config('safemode') && ~strcmpi('yes', ...
                         dj.internal.ask('Proceed to delete?'))
                     disp 'delete canceled'
                 else
+                    rowDeleteChunk = dj.config('rowDeleteChunk');
+                    if ~isempty(rowDeleteChunk) && (~isscalar(rowDeleteChunk) || ...
+                            isnan(rowDeleteChunk) || rowDeleteChunk <= 0 || ...
+                            (~isinf(rowDeleteChunk) && rowDeleteChunk ~= floor(rowDeleteChunk)))
+                        error('DataJoint:Config:InvalidRowDeleteChunk', ...
+                            'rowDeleteChunk must be empty, Inf, or a positive integer.');
+                    end
                     self.schema.conn.startTransaction
                     try
-                        for rel = fliplr(rels)
+                        for i = numel(rels):-1:1
+                            rel = rels(i);
                             fprintf('Deleting from %s\n', rel.className)
-                            rel.delQuick;
+                            if ~isempty(rowDeleteChunk) && ~isinf(rowDeleteChunk) && ...
+                                    (counts(i) > rowDeleteChunk || isCapped(i))
+                                fprintf('  Using server-side chunks of %d tuples.\n', rowDeleteChunk);
+                                rel.delQuickChunks(rowDeleteChunk);
+                            else
+                                rel.delQuick;
+                            end
                         end
                         self.schema.conn.commitTransaction
                         disp committed
