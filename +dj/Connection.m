@@ -88,7 +88,12 @@ classdef Connection < handle
             end
             % Force unique
             if isfield(self.foreignKeys,'from') && isfield(self.foreignKeys,'ref')
-                allFk =[cellfun(@string,{self.foreignKeys.from})'  cellfun(@string,{self.foreignKeys.ref})'];
+                % Distinct foreign keys can link the same pair of tables
+                % through different (possibly renamed) columns. Keep every
+                % mapping so cascade traversal does not lose an OR path.
+                allFk = [string({self.foreignKeys.from})' string({self.foreignKeys.ref})' ...
+                    string(arrayfun(@(fk) strjoin(fk.attrs,','),self.foreignKeys,'UniformOutput',false))' ...
+                    string(arrayfun(@(fk) strjoin(fk.ref_attrs,','),self.foreignKeys,'UniformOutput',false))'];
                 [uFk,ix] = unique(allFk,"rows","stable");
                 self.foreignKeys = self.foreignKeys(ix);
             end

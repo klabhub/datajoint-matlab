@@ -60,6 +60,18 @@ classdef Relvar < dj.internal.GeneralRelvar & dj.internal.Table
             end
 
             isCapped = false;
+            % A restricted EXISTS can execute an expensive cascade of
+            % semijoins. Check only the physical target table here. An
+            % empty table is an exact zero for every restriction; otherwise
+            % retain EXPLAIN's explicitly approximate estimate below.
+            baseExists = self.schema.conn.query(sprintf( ...
+                'SELECT EXISTS(SELECT 1 FROM %s LIMIT 1) AS yes', ...
+                self.fullTableName));
+            if ~logical(baseExists.yes)
+                count = 0;
+                isApprox = false;
+                return;
+            end
             if isinf(limit)
                 explainSql = sprintf('EXPLAIN SELECT 1 FROM %s', self.sql);
             else
@@ -123,6 +135,8 @@ classdef Relvar < dj.internal.GeneralRelvar & dj.internal.Table
         end
 
 
+
+
         function del(self)
             % DEL - remove all tuples of the relation from its table
             % and, recursively, all matching tuples in dependent tables.
@@ -155,65 +169,9 @@ classdef Relvar < dj.internal.GeneralRelvar & dj.internal.Table
             if ~self.exists
                 disp 'nothing to delete'
             else
-                % compile the list of relvars to be deleted from
-                list = self.descendants;
-                rels = cellfun(@(name) dj.Relvar(name), list, 'UniformOutput', false);
-                rels = [rels{:}];
-                rels(1) = rels(1) & self.restrictions;
-                
-                % apply proper restrictions
-                restrictByMe = arrayfun(@(rel) ...
-                    any(ismember(...
-                    cellfun(@(r) self.schema.conn.tableToClass(r), rel.parents(false), ...
-                        'uni',false),...
-                    list)),...
-                    rels);  % restrict by all association tables, i.e. tables that make
-                            % referenced to other tables
-                restrictByMe(1) = ~isempty(self.restrictions); % if self has restrictions,
-                                                               % then restrict by self
-                for i=1:length(rels)
-                    % iterate through all tables that reference rels(i)
-                    for ix = cellfun(@(child) find(strcmp( ...
-                            self.schema.conn.tableToClass(child),list)), rels(i).children)
-                        % and restrict them by it or its restrictions
-                        if restrictByMe(i)
-                            % Extract foreign key indices for table that match target parent
-                            fk_index = arrayfun(...
-                                @(x) strcmp(x.from, rels(ix).fullTableName), ...
-                                self.schema.conn.foreignKeys, 'uni', true);
-                            fks = self.schema.conn.foreignKeys(fk_index);
-                            if ~all([fks.aliased])
-                                % If matched foreign keys are not aliased, no renaming
-                                % necessary. Restrict table based on normal projection.
-                                rels(ix).restrict(proj(rels(i)));
-                            else
-                                % Determine which foreign keys have been renamed
-                                fks_ref_attrs_flattened = arrayfun(@(x) x.ref_attrs{:}, fks, 'UniformOutput', false);
-                                fks_attrs_flattened = arrayfun(@(x) x.attrs{:}, fks, 'UniformOutput', false);
-                                % Build OR string query using original and renamed attributes
-                                or_string_query = strjoin(cellfun(...
-                                    @(attr,ref_attr) sprintf('%s = "%s"', attr, rels(i).fetch1(ref_attr)), ...
-                                    fks_attrs_flattened, fks_ref_attrs_flattened, ...
-                                    'uni', 0), ' OR ');
-                                % Restrict table based on projection with rename arguments on
-                                % foreign keys.
-                                rels(ix).restrict(or_string_query);
-                            end
-                        else
-                            rels(ix).restrict(rels(i).restrictions{:});
-                        end
-                    end
-                end
-                
                 fprintf '\nABOUT TO DELETE:'
-                counts = nan(size(rels));
-                isCapped = false(size(rels));
-                isApprox = false(size(rels));
-                countLimit = dj.config('countLimit');
-                for i=1:numel(rels)
-                    isRoot = strcmp(rels(i).fullTableName, self.fullTableName);
-                    [counts(i),isCapped(i),isApprox(i)] = ...
-                        rels(i).estimatedDeleteCount(countLimit,isRoot);
+                [rels,counts,isCapped,isApprox] = dj.planDelete(self,dj.config('countLimit'));
+                for i = 1:numel(rels)
                     if counts(i)
                         fprintf('\n\t');
                         if isCapped(i)
