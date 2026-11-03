@@ -14,7 +14,7 @@ classdef TestSchema < Prep
                 testCase.CONN_INFO.password,'',true);
             dj.createSchema(package,[testCase.test_root '/test_schemas'], ...
                 [testCase.PREFIX '_' lower(package)]);
-            store_dir = '/tmp/fake';
+            store_dir = fullfile(testCase.test_root,'schema_store');
             store_name = 'main';
             mkdir(store_dir);
             dj.config('safemode', false);
@@ -37,13 +37,17 @@ classdef TestSchema < Prep
                 [testCase.PREFIX '_' lower(package)]);
             schema = External.getSchema;
             q = schema.v.Document & ['document_id=' num2str(id)];
-            % display (be careful with MxPrint's b/c this test relies on stdout)
-            queryPreview = evalc('q');
-            queryPreview = splitlines(queryPreview);
-            recordPreview = queryPreview(end-4);
-            recordPreview = strsplit(recordPreview{1});
-            testCase.verifyTrue(all(cellfun(@(x) strcmp(x,'''=BLOB='''), ...
-                recordPreview(4:end-1))));
+            % Check masking without depending on console line positions or
+            % MATLAB's quoting of table cells. SQL logging also contains the
+            % marker expressions, so silence it during this display check.
+            previousLogLevel = dj.config('loglevel');
+            restoreLogLevel = onCleanup(@() dj.config('loglevel',previousLogLevel));
+            dj.config('loglevel','ERROR');
+            queryPreview = evalc('disp(q)');
+            clear restoreLogLevel;
+            testCase.verifyEqual(count(queryPreview,'=BLOB='),3);
+            testCase.verifyTrue(contains(queryPreview,'raphael'));
+            testCase.verifyFalse(contains(queryPreview,'hello'));
             % reverse engineering
             raw_def = dj.internal.Declare.getDefinition(q);
             assembled_def = describe(q);
@@ -100,7 +104,7 @@ classdef TestSchema < Prep
             % setup
             dj.config.restore;
             dj.config('safemode', false);
-            dj.new('new_space.Student', 'M', pwd , 'djtest_new-space');
+            dj.new('new_space.Student', 'M', pwd , [testCase.PREFIX '_new-space']);
             rmdir('+new_space', 's');
         end
         function TestSchema_testVirtual(testCase)

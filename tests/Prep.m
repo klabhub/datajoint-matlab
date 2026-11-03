@@ -5,22 +5,23 @@ classdef Prep < matlab.unittest.TestCase
             'host', getenv('DJ_HOST'), ...
             'user', getenv('DJ_USER'), ...
             'password', getenv('DJ_PASS'));
-        CONN_INFO = struct(...
-            'host', getenv('DJ_TEST_HOST'), ...
-            'user', getenv('DJ_TEST_USER'), ...
-            'password', getenv('DJ_TEST_PASSWORD'));
-        S3_CONN_INFO = struct(...
-            'endpoint', getenv('S3_ENDPOINT'), ...
-            'access_key', getenv('S3_ACCESS_KEY'), ...
-            'secret_key', getenv('S3_SECRET_KEY'), ...
-            'bucket', getenv('S3_BUCKET'));
-        PREFIX = 'djtest';
+    end
+    properties (Dependent)
+        CONN_INFO
+        S3_CONN_INFO
     end
     properties
+        PREFIX = 'djtest';
         test_root;
         external_file_store_root;
     end
     methods
+        function info = get.CONN_INFO(self)
+            info = self.connectionInfo();
+        end
+        function info = get.S3_CONN_INFO(self)
+            info = self.s3ConnectionInfo();
+        end
         function obj = Prep()
             % Initialize test_root
             % obj.test_root = [pwd '/tests'];
@@ -32,6 +33,17 @@ classdef Prep < matlab.unittest.TestCase
             end
         end
      end
+    methods (Access=protected)
+        function info = connectionInfo(~)
+            info = struct('host',getenv('DJ_TEST_HOST'), ...
+                'user',getenv('DJ_TEST_USER'),'password',getenv('DJ_TEST_PASSWORD'));
+        end
+        function info = s3ConnectionInfo(~)
+            info = struct('endpoint',getenv('S3_ENDPOINT'), ...
+                'access_key',getenv('S3_ACCESS_KEY'),'secret_key',getenv('S3_SECRET_KEY'), ...
+                'bucket',getenv('S3_BUCKET'));
+        end
+    end
     methods (TestClassSetup)
         function init(testCase)
             disp('---------------INIT---------------');

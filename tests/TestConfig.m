@@ -64,7 +64,8 @@ classdef TestConfig < Prep
             curr = jsonencode(obj2);
             curr = regexprep(curr,'[a-z0-9][A-Z]','${$0(1)}_${lower($0(2))}');
             % checks
-            verifyEqual(test_instance, curr, file);
+            % JSON null (including encoded Inf) and [] both decode to empty.
+            verifyEqual(test_instance, jsondecode(curr), jsondecode(file));
             assert(~contains(read_data, '[]'));
             % optional remove file
             if ~strcmpi(type, 'load-custom')
