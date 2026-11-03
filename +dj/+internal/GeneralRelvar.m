@@ -68,7 +68,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             % DISP - display the contents of the relation.
             % Only non-blob attributes of the first several tuples are shown.
             % The total number of tuples is printed at the end.
-            tic
+            displayTimer = tic;
             fprintf('\nObject %s\n\n',class(self))
             hdr = self.header;
             % tableHeader exists in tables but not in derived relations.
@@ -87,6 +87,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             end
             maxRows = dj.config('displayLimit');
             preview = self.fetch(attrList{:}, sprintf('LIMIT %d', maxRows+1));
+            previewCount = numel(preview);
             if ~isempty(preview)
                 hasMore = length(preview) > maxRows;
                 preview = struct2table(preview(1:min(end,maxRows)), 'asArray', true);
@@ -101,13 +102,21 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             end
             if dj.config('displayCount')
                 countLimit = dj.config('countLimit');
-                [nrTuples, isCapped] = self.countUpTo(countLimit);
+                validateCountLimit(countLimit);
+                if previewCount < maxRows+1 || previewCount > countLimit
+                    % A short preview exhausted the relation; a preview
+                    % above the count cap already proves it is exceeded.
+                    nrTuples = min(previewCount,countLimit);
+                    isCapped = previewCount > countLimit;
+                else
+                    [nrTuples, isCapped] = self.countUpTo(countLimit);
+                end
                 if isCapped
                     countText = sprintf('>%d', countLimit);
                 else
                     countText = sprintf('%d', nrTuples);
                 end
-                fprintf('%s tuples (%.3g s)\n\n', countText, toc)
+                fprintf('%s tuples (%.3g s)\n\n', countText, toc(displayTimer))
             end
         end
         
@@ -170,7 +179,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
         function yes = exists(self)
             % EXISTS - a fast check whether the relvar
             % contains any tuples
-            [~, sql_] = self.compile(3);
+            [~, sql_] = self.compile(3,true);
             yes = self.conn.query(sprintf('SELECT EXISTS(SELECT 1 FROM %s LIMIT 1) as yes',...
                 sql_));
             yes = logical(yes.yes);
@@ -178,7 +187,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
         
         function n = count(self)
             % COUNT - the number of tuples in the relation.
-            [~, sql_] = self.compile(3);
+            [~, sql_] = self.compile(3,true);
             n = self.conn.query(sprintf('SELECT count(*) as n FROM %s', sql_));
             n = double(n.n);
         end
@@ -190,11 +199,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             % there are more than LIMIT matching tuples and N equals LIMIT.
             % The bounded inner query lets the server stop after LIMIT+1
             % matches instead of scanning the complete relation.
-            if ~isscalar(limit) || isnan(limit) || limit < 1 || ...
-                    (~isinf(limit) && limit ~= floor(limit))
-                error('DataJoint:invalidCountLimit', ...
-                    'The count limit must be a positive integer or Inf.');
-            end
+            validateCountLimit(limit);
 
             if isinf(limit)
                 n = self.count;
@@ -202,7 +207,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
                 return;
             end
 
-            [~, sql_] = self.compile(3);
+            [~, sql_] = self.compile(3,true);
             boundedSql = sprintf([ ...
                 'SELECT COUNT(*) AS n FROM (' ...
                 'SELECT 1 FROM %s LIMIT %d' ...
@@ -298,10 +303,13 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             %    s = R.fetch('*', 'ORDER BY field1 DESC, field 2  LIMIT 100');
             %
             % See also proj, fetch1, fetchn
+            % Simple primary-key equalities may be accelerated through an
+            % indexed parent. Set queryParentKeyOptimization=false to opt out.
+            % This rewrite is SELECT-only; raw sql/whereClause are unchanged.
             
             [limit, args] = makeLimitClause(varargin{:});
             self = self.proj(args{:});
-            [hdr, sql_] = self.compile;
+            [hdr, sql_] = self.compile(0,true);
             ret = self.conn.query(sprintf('SELECT %s FROM %s%s', ...
                 hdr.sql, sql_, limit));
             ret = dj.struct.fromFields(ret);
@@ -745,7 +753,7 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             end
         end
         
-        function [header, sql] = compile(self, enclose)
+        function [header, sql] = compile(self, enclose, optimize)
             % compile the query tree into an SQL expression
             % OUTPUTS:
             %   sql =   "... [WHERE ...] [GROUP BY (...)]'
@@ -769,6 +777,10 @@ classdef GeneralRelvar < matlab.mixin.Copyable
             if nargin<2
                 enclose = 0;
             end
+            if nargin<3
+                optimize = false;
+            end
+            % Only SELECT entry points opt in. Keep SQL used for writes raw.
             
             % apply relational operators recursively
             switch self.operator
@@ -786,12 +798,12 @@ classdef GeneralRelvar < matlab.mixin.Copyable
                     sql = tab.fullTableName;
                     
                 case 'proj'
-                    [header, sql] = compile(self.operands{1},1);
+                    [header, sql] = compile(self.operands{1},1,optimize);
                     header.project(self.operands(2:end));
                     
                 case 'aggregate'
-                    [header, sql] = compile(self.operands{1},2);
-                    [header2, sql2] = compile(self.operands{2},2);
+                    [header, sql] = compile(self.operands{1},2,optimize);
+                    [header2, sql2] = compile(self.operands{2},2,optimize);
                     commonBlobs = intersect(header.blobNames, header2.blobNames);
                     assert(isempty(commonBlobs), 'join cannot be done on blob attributes')
                     pkey = sprintf(',`%s`', header.primaryKey{:});
@@ -802,8 +814,8 @@ classdef GeneralRelvar < matlab.mixin.Copyable
                         'Aggregate operators must define at least one computation')
                     
                 case 'join'
-                    [header1, sql1] = compile(self.operands{1},2);
-                    [header2, sql2] = compile(self.operands{2},2);
+                    [header1, sql1] = compile(self.operands{1},2,optimize);
+                    [header2, sql2] = compile(self.operands{2},2,optimize);
                     sql = sprintf('%s NATURAL JOIN %s', sql1, sql2);
 
                     header = join(header1,header2);
@@ -823,7 +835,20 @@ classdef GeneralRelvar < matlab.mixin.Copyable
                 end
                 % add WHERE clause
                 sql = sprintf('%s%s', sql);
-                whereClause = makeWhereClause(header, self.restrictions);
+                whereClause = makeWhereClause(header, self.restrictions,optimize);
+                if optimize && strcmp(self.operator,'table')
+                    options = dj.config;
+                    if ~isfield(options,'queryParentKeyOptimization') || options.queryParentKeyOptimization
+                        parent = dj.internal.parentKeyFilter(tab,self.restrictions);
+                        if ~isempty(parent)
+                            attributes = sprintf(',`%s`',parent.attributes{:});
+                            attributes = attributes(2:end);
+                            parentWhere = makeWhereClause(parent.header,parent.restrictions);
+                            whereClause = sprintf('%s AND ((%s) IN (SELECT %s FROM %s WHERE %s))', ...
+                                whereClause,attributes,attributes,parent.table,parentWhere);
+                        end
+                    end
+                end
                 if ~isempty(whereClause)
                     sql = sprintf('%s WHERE %s', sql, whereClause);
                 end
@@ -842,7 +867,19 @@ classdef GeneralRelvar < matlab.mixin.Copyable
 end
 
 
-function clause = makeWhereClause(header, restrictions)
+function validateCountLimit(limit)
+    if ~isscalar(limit) || isnan(limit) || limit < 1 || ...
+            (~isinf(limit) && limit ~= floor(limit))
+        error('DataJoint:invalidCountLimit', ...
+            'The count limit must be a positive integer or Inf.');
+    end
+end
+
+
+function clause = makeWhereClause(header, restrictions, optimize)
+    if nargin < 3
+        optimize = false;
+    end
     % make the where clause from self.restrictions
     persistent aliasCount
     if isempty(aliasCount)
@@ -862,7 +899,7 @@ function clause = makeWhereClause(header, restrictions)
         switch true
             case isa(cond, 'dj.internal.GeneralRelvar') && strcmp(cond.operator, 'union')
                 % union
-                s = cellfun(@(x) makeWhereClause(header, {x}), cond.operands, 'uni', false);
+                s = cellfun(@(x) makeWhereClause(header, {x},optimize), cond.operands, 'uni', false);
                 assert(~isempty(s))
                 s = sprintf('(%s) OR ', s{:});
                 clause = sprintf('%s AND %s(%s)', clause, not, ...
@@ -870,7 +907,7 @@ function clause = makeWhereClause(header, restrictions)
                 
             case isa(cond, 'dj.internal.GeneralRelvar') && strcmp(cond.operator, 'not')
                 clause = sprintf('%s AND NOT(%s)', clause, ...
-                    makeWhereClause(header, cond.operands));
+                    makeWhereClause(header, cond.operands,optimize));
                 
             case dj.lib.isString(cond) && strcmpi(cond,'NOT')
                 % negation of the next condition
@@ -910,7 +947,7 @@ function clause = makeWhereClause(header, restrictions)
                 
             case isa(cond, 'dj.internal.GeneralRelvar')
                 % semijoin or antijoin
-                [condHeader, condSQL] = cond.compile;
+                [condHeader, condSQL] = cond.compile(0,optimize);
                 
                 % isolate previous projection (if not already)
                 if ismember(cond.operator, {'proj','aggregate'}) && ...

@@ -63,3 +63,38 @@ MINIO_VER=RELEASE.2022-01-03T18-22-58Z
 + Launch Matlab with no GUI by running command `matlab -nodisplay`
 
 </details>
+
+## Parent-key SELECT optimization
+
+Fetches, existence checks, and counts can accelerate simple key restrictions
+through an indexed parent. For example, scalar `etag` and `subject` equalities
+on an epoch-channel table can also restrict its epoch parent, allowing keyed
+access to the child instead of scanning its full primary index.
+
+This is enabled by default. To disable it:
+
+```matlab
+dj.config('queryParentKeyOptimization', false)
+```
+
+The first implementation handles scalar structs and individual SQL
+`key = literal` conditions on base tables. It requires an unrenamed,
+nonnullable primary foreign key covering the parent's primary key, a known
+leading parent index column, and an unambiguous best parent. It keeps the
+original child predicates and adds a redundant parent semijoin. Compound SQL,
+functions, negations, struct-array disjunctions, and uncertain mappings are
+left unchanged. Parent indexes are identified from primary and foreign-key
+metadata; custom secondary indexes are not inspected.
+
+Rewriting applies only during SELECT compilation, including beneath
+projections and joins. Raw `rel.sql` and write predicates retain their original
+form. This feature does not create indexes or modify database data. Schema
+metadata reloads are used directly; there is no cached query-plan choice.
+
+Metadata-only regression tests can be run with:
+
+```matlab
+addpath('tests')
+results = runtests('TestParentKeyOptimization');
+assertSuccess(results)
+```
